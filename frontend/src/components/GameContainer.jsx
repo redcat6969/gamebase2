@@ -38,7 +38,13 @@ export default function GameContainer({
           className="min-h-[50vh]"
         >
           {gameType ? (
-            <TVView state={gameState} roomCode={roomCode} socket={socket} />
+            gameState == null ? (
+              <p className="text-slate-400 text-center py-12">
+                Загрузка состояния игры…
+              </p>
+            ) : (
+              <TVView state={gameState} roomCode={roomCode} socket={socket} />
+            )
           ) : (
             <p className="text-slate-400 text-center py-8">
               Ожидание начала игры…
@@ -62,13 +68,19 @@ export default function GameContainer({
         className="min-h-[50vh]"
       >
         {Cmp ? (
-          <Cmp
-            state={gameState}
-            roomCode={roomCode}
-            socket={socket}
-            playerId={playerId}
-            isCreator={isCreator}
-          />
+          gameState == null ? (
+            <p className="text-slate-400 text-center py-12">
+              Загрузка состояния игры…
+            </p>
+          ) : (
+            <Cmp
+              state={gameState}
+              roomCode={roomCode}
+              socket={socket}
+              playerId={playerId}
+              isCreator={isCreator}
+            />
+          )
         ) : (
           <p className="text-slate-400 text-center py-8">
             Ожидание выбора игры…

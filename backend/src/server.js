@@ -55,6 +55,7 @@ io.on('connection', (socket) => {
             isCreator: true,
           });
           socket.emit('room_update', rooms.serializeRoom(r.room));
+          rooms.pushGameStateToSocket(r.room, socket.id);
           return;
         }
         delete socket.data.hostRoomCode;
@@ -115,6 +116,7 @@ io.on('connection', (socket) => {
       isCreator: true,
     });
     socket.emit('room_update', rooms.serializeRoom(room));
+    rooms.pushGameStateToSocket(room, socket.id);
   });
 
   socket.on('join_room', (payload = {}) => {
@@ -141,6 +143,7 @@ io.on('connection', (socket) => {
       'room_update',
       rooms.serializeRoom(result.room)
     );
+    rooms.pushGameStateToSocket(result.room, socket.id);
   });
 
   socket.on('start_game', (payload = {}) => {

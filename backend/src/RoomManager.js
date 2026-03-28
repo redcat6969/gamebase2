@@ -422,6 +422,43 @@ export class RoomManager {
     return { ok: true };
   }
 
+  /**
+   * Один снимок game_update после перезагрузки вкладки / переподключения сокета.
+   * @param {Room} room
+   * @param {string} socketId
+   */
+  pushGameStateToSocket(room, socketId) {
+    if (!room?.game || !socketId) return;
+    const sock = this.io.sockets.sockets.get(socketId);
+    if (!sock) return;
+    const roomStatus = room.status;
+    const payloadBase = { roomCode: room.code, roomStatus };
+
+    for (const p of room.players.values()) {
+      if (p.socketId !== socketId) continue;
+      let state = null;
+      if (p.role === 'spectator' && typeof room.game.getHostState === 'function') {
+        state = room.game.getHostState();
+      } else if (p.role === 'player' && typeof room.game.getPlayerState === 'function') {
+        state = room.game.getPlayerState(p.id);
+      } else if (typeof room.game.getState === 'function') {
+        state = room.game.getState();
+      }
+      sock.emit('game_update', { ...payloadBase, state });
+      return;
+    }
+
+    if (
+      room.hostSocketId === socketId &&
+      typeof room.game.getHostState === 'function'
+    ) {
+      sock.emit('game_update', {
+        ...payloadBase,
+        state: room.game.getHostState(),
+      });
+    }
+  }
+
   /** @param {string} code */
   endGameResults(code) {
     const c = this._normalizeCode(code);

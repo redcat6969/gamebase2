@@ -461,13 +461,7 @@ export class CommonGuess extends BaseGame {
     const currentWord = this.currentWord;
     if (currentWord == null) return;
 
-    const idx = this._currentWordPoolIndex;
-    if (idx >= 0 && idx < this.gamePool.length && this.gamePool[idx] === currentWord) {
-      this.gamePool.splice(idx, 1);
-    } else {
-      const i = this.gamePool.indexOf(currentWord);
-      if (i >= 0) this.gamePool.splice(i, 1);
-    }
+    const savedPoolIdx = this._currentWordPoolIndex;
     this._currentWordPoolIndex = -1;
 
     /** @type {string[]} */
@@ -484,16 +478,34 @@ export class CommonGuess extends BaseGame {
       if (valid) validMatchers.push(pid);
     }
 
+    /** Каждый верно указавший слово «снимает» свою карточку и одно вхождение в общем пуле */
+    if (validMatchers.length > 0) {
+      for (let n = 0; n < validMatchers.length; n++) {
+        const i = this.gamePool.indexOf(currentWord);
+        if (i >= 0) this.gamePool.splice(i, 1);
+      }
+      for (const pid of validMatchers) {
+        const sub = this.roundSubmissions.get(pid);
+        if (sub?.wordId) {
+          this.remainingWordIds.get(pid)?.delete(sub.wordId);
+        }
+      }
+    } else {
+      const idx = savedPoolIdx;
+      if (idx >= 0 && idx < this.gamePool.length && this.gamePool[idx] === currentWord) {
+        this.gamePool.splice(idx, 1);
+      } else {
+        const i = this.gamePool.indexOf(currentWord);
+        if (i >= 0) this.gamePool.splice(i, 1);
+      }
+    }
+
     const N = validMatchers.length;
     const pointsPerMatcher = N >= 2 ? N : 0;
 
     if (pointsPerMatcher > 0) {
       for (const pid of validMatchers) {
         this.scores.set(pid, (this.scores.get(pid) ?? 0) + pointsPerMatcher);
-        const sub = this.roundSubmissions.get(pid);
-        if (sub?.wordId) {
-          this.remainingWordIds.get(pid)?.delete(sub.wordId);
-        }
       }
     }
 
