@@ -256,7 +256,12 @@ export class RoomManager {
       }
       for (const [pid, p] of room.players) {
         if (p.socketId === socketId) {
-          room.players.delete(pid);
+          /** Создатель остаётся в комнате (сессия + host_rejoin), иначе пропадает из списка участников */
+          if (room.creatorPlayerId && pid === room.creatorPlayerId && p.isCreator) {
+            p.socketId = '';
+          } else {
+            room.players.delete(pid);
+          }
           touched = true;
           break;
         }
