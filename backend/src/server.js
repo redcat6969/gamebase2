@@ -1,8 +1,20 @@
 import http from 'node:http';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import express from 'express';
 import { RoomManager } from './RoomManager.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+try {
+  const qPath = join(__dirname, '../questions.json');
+  const arr = JSON.parse(readFileSync(qPath, 'utf8'));
+  console.log(`Questions bank: ${Array.isArray(arr) ? arr.length : 0} items`);
+} catch (e) {
+  console.warn('questions.json:', e?.message ?? e);
+}
 
 const PORT = Number(process.env.PORT) || 3001;
 

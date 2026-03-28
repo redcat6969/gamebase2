@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import QRCode from 'qrcode';
 import { getSocket } from '../socket.js';
 import GameContainer from '../components/GameContainer.jsx';
+import GameStartSetupModal from '../components/GameStartSetupModal.jsx';
 
 function normalizeRoomCode(code) {
   const d = String(code ?? '').replace(/\D/g, '');
@@ -37,6 +38,9 @@ export default function HostRoomPage() {
   const [creatorName, setCreatorName] = useState('');
   const [playerId, setPlayerId] = useState(null);
   const [creating, setCreating] = useState(false);
+  const [totalRounds, setTotalRounds] = useState(3);
+  /** Настройки выбранной игры — только после «Начать игру» */
+  const [gameSetupOpen, setGameSetupOpen] = useState(false);
   const creatorNameSubmittedRef = useRef('');
 
   const code =
@@ -150,10 +154,11 @@ export default function HostRoomPage() {
     });
   }
 
-  function startGame() {
+  function confirmStartGameFromSetup() {
     const c = normalizeRoomCode(code);
     if (!c) {
       setStartError('Некорректный код комнаты');
+      setGameSetupOpen(false);
       return;
     }
     setStartError('');
@@ -161,10 +166,11 @@ export default function HostRoomPage() {
       code: c,
       gameType: 'common_guess',
       options: {
-        prompt: 'Назовите что-нибудь популярное',
         roundSeconds: 60,
+        totalRounds,
       },
     });
+    setGameSetupOpen(false);
   }
 
   const inGame = roomStatus === 'PLAYING' || roomStatus === 'RESULTS';
@@ -177,6 +183,10 @@ export default function HostRoomPage() {
     room?.status === 'LOBBY';
 
   const participants = room?.participants ?? [];
+
+  useEffect(() => {
+    if (inGame && gameSetupOpen) setGameSetupOpen(false);
+  }, [inGame, gameSetupOpen]);
 
   if (codeParam === 'new') {
     return (
@@ -280,13 +290,15 @@ export default function HostRoomPage() {
               </ul>
 
               {canStart && (
-                <button
-                  type="button"
-                  onClick={startGame}
-                  className="mt-6 w-full rounded-2xl bg-fuchsia-600 hover:bg-fuchsia-500 py-4 text-xl font-bold"
-                >
-                  Начать игру
-                </button>
+                <div className="mt-6">
+                  <button
+                    type="button"
+                    onClick={() => setGameSetupOpen(true)}
+                    className="w-full rounded-2xl bg-fuchsia-600 hover:bg-fuchsia-500 py-4 text-xl font-bold"
+                  >
+                    Начать игру
+                  </button>
+                </div>
               )}
             </motion.section>
           ) : null}
@@ -308,6 +320,15 @@ export default function HostRoomPage() {
             isCreator={Boolean(creatorPlayerId && myId && creatorPlayerId === myId)}
           />
         </motion.div>
+
+        <GameStartSetupModal
+          open={gameSetupOpen}
+          gameType="common_guess"
+          totalRounds={totalRounds}
+          onTotalRoundsChange={setTotalRounds}
+          onCancel={() => setGameSetupOpen(false)}
+          onConfirm={confirmStartGameFromSetup}
+        />
       </motion.div>
     </div>
   );

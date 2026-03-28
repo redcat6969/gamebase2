@@ -1,10 +1,30 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { BaseGame } from './BaseGame.js';
 
 /** До скольки слов принимаем с одного игрока */
 const MAX_WORDS = 5;
 const DEFAULT_ROUND_S = 60;
 const BETWEEN_ROUNDS_MS = 3000;
+const BETWEEN_MACROS_MS = 4500;
 const ROUND_SUBMIT_MS = 120000;
+
+const __cgDir = dirname(fileURLToPath(import.meta.url));
+
+/** @returns {string[]} */
+function loadQuestionBank() {
+  try {
+    const raw = readFileSync(join(__cgDir, '../../questions.json'), 'utf8');
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return [];
+    return arr.filter((q) => typeof q === 'string' && q.trim().length > 0);
+  } catch {
+    return [];
+  }
+}
+
+const QUESTION_BANK = loadQuestionBank();
 
 export class CommonGuess extends BaseGame {
   constructor(ctx) {
@@ -25,8 +45,17 @@ export class CommonGuess extends BaseGame {
     this.betweenRoundTimer = null;
     /** @type {ReturnType<typeof setTimeout> | null} */
     this.roundSubmitTimer = null;
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    this.betweenMacroTimer = null;
     /** @type {number} */
     this.roundMs = DEFAULT_ROUND_S * 1000;
+
+    /** @type {number} */
+    this.totalRounds = 3;
+    /** @type {string[]} */
+    this.gameQuestions = [];
+    /** @type {number} */
+    this.currentMacroRoundIndex = 0;
 
     /** @type {string[]} слова в пуле (текущее слово раунда всё ещё в массиве до конца раунда) */
     this.gamePool = [];
@@ -49,10 +78,22 @@ export class CommonGuess extends BaseGame {
 
   /** @param {Record<string, unknown>} [options] */
   onStart(options = {}) {
-    this.prompt = typeof options.prompt === 'string' ? options.prompt : '';
     const rs =
       typeof options.roundSeconds === 'number' ? options.roundSeconds : DEFAULT_ROUND_S;
     this.roundMs = Math.max(15, Math.min(rs, 600)) * 1000;
+
+    const trRaw = Number(options.totalRounds);
+    this.totalRounds = Number.isFinite(trRaw)
+      ? Math.max(1, Math.min(5, Math.floor(trRaw)))
+      : 3;
+    this.gameQuestions = CommonGuess.pickRandomQuestions(
+      QUESTION_BANK,
+      this.totalRounds
+    );
+    this.currentMacroRoundIndex = 0;
+    this.prompt =
+      this.gameQuestions[0] ??
+      (typeof options.prompt === 'string' ? options.prompt : 'Ваши ассоциации');
 
     this.phase = 'collecting';
     this.answers.clear();
@@ -71,6 +112,7 @@ export class CommonGuess extends BaseGame {
     this._clearRoundTimer();
     this._clearBetweenRoundTimer();
     this._clearRoundSubmitTimer();
+    this._clearBetweenMacroTimer();
 
     this.deadlineAt = Date.now() + this.roundMs;
     this.roundTimer = setTimeout(() => {
@@ -78,6 +120,26 @@ export class CommonGuess extends BaseGame {
     }, this.roundMs);
 
     this._emitUpdate();
+  }
+
+  /**
+   * @param {string[]} all
+   * @param {number} n
+   * @returns {string[]}
+   */
+  static pickRandomQuestions(all, n) {
+    const need = Math.max(1, Math.min(5, Math.floor(n)));
+    const pool = [...all];
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    const out = pool.slice(0, Math.min(need, pool.length));
+    const fallback = 'Назовите что-нибудь популярное';
+    while (out.length < need) {
+      out.push(fallback);
+    }
+    return out;
   }
 
   /**
@@ -150,6 +212,7 @@ export class CommonGuess extends BaseGame {
     this._clearRoundTimer();
     this._clearBetweenRoundTimer();
     this._clearRoundSubmitTimer();
+    this._clearBetweenMacroTimer();
   }
 
   broadcastState() {
@@ -181,6 +244,13 @@ export class CommonGuess extends BaseGame {
     }
   }
 
+  _clearBetweenMacroTimer() {
+    if (this.betweenMacroTimer != null) {
+      clearTimeout(this.betweenMacroTimer);
+      this.betweenMacroTimer = null;
+    }
+  }
+
   _endCollectingPhase() {
     if (this.phase !== 'collecting') return;
     this._clearRoundTimer();
@@ -202,6 +272,102 @@ export class CommonGuess extends BaseGame {
     this.phase = 'matching';
     this.roundIndex = 0;
     this._startRound();
+  }
+
+  _beginMacroCollecting() {
+    this._clearBetweenMacroTimer();
+    this.phase = 'collecting';
+    this.answers.clear();
+    this.gamePool = [];
+    this.initialPoolSize = 0;
+    this.playerWordSlots.clear();
+    this.remainingWordIds.clear();
+    this.roundSubmissions.clear();
+    this.currentWord = null;
+    this._currentWordPoolIndex = -1;
+    this.lastRoundResults = null;
+    this.roundIndex = 0;
+    this.deadlineAt = Date.now() + this.roundMs;
+    this._clearRoundTimer();
+    this.roundTimer = setTimeout(() => {
+      this._endCollectingPhase();
+    }, this.roundMs);
+    this._emitUpdate();
+  }
+
+  _onWordPoolExhausted() {
+    this._clearBetweenRoundTimer();
+    this._clearRoundSubmitTimer();
+
+    if (this.currentMacroRoundIndex < this.totalRounds - 1) {
+      this.currentMacroRoundIndex += 1;
+      this.prompt =
+        this.gameQuestions[this.currentMacroRoundIndex] ??
+        'Назовите что-нибудь популярное';
+      this.phase = 'between_macros';
+      this.currentWord = null;
+      this._currentWordPoolIndex = -1;
+      this.roundSubmissions.clear();
+      this.lastRoundResults = null;
+      this.answers.clear();
+      this.playerWordSlots.clear();
+      this.remainingWordIds.clear();
+      this.gamePool = [];
+      this.initialPoolSize = 0;
+
+      this.ctx.broadcast('NEW_ROUND', {
+        roomCode: this.code,
+        kind: 'macro_transition',
+        currentWord: null,
+        prompt: this.prompt,
+        macroRound: this.currentMacroRoundIndex + 1,
+        totalMacroRounds: this.totalRounds,
+        roundId: this.roundSeq,
+      });
+
+      this._emitUpdate();
+
+      this._clearBetweenMacroTimer();
+      this.betweenMacroTimer = setTimeout(() => {
+        this.betweenMacroTimer = null;
+        this._beginMacroCollecting();
+      }, BETWEEN_MACROS_MS);
+      return;
+    }
+
+    this._finalizeGameOver();
+  }
+
+  _finalizeGameOver() {
+    this._clearRoundTimer();
+    this._clearBetweenRoundTimer();
+    this._clearRoundSubmitTimer();
+    this._clearBetweenMacroTimer();
+    this.phase = 'finished';
+    this.currentWord = null;
+    this._currentWordPoolIndex = -1;
+    if (typeof this.ctx.setRoomStatus === 'function') {
+      this.ctx.setRoomStatus('RESULTS');
+    }
+    this._rebuildClustersSummary();
+
+    const players = this.ctx.getPlayers();
+    const leaderboard = [...players.values()]
+      .map((p) => ({
+        playerId: p.id,
+        name: p.name,
+        score: this.scores.get(p.id) ?? 0,
+      }))
+      .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+
+    this.ctx.broadcast('GAME_OVER', {
+      roomCode: this.code,
+      scores: Object.fromEntries(this.scores),
+      leaderboard,
+      totalRounds: this.totalRounds,
+    });
+
+    this._emitUpdate();
   }
 
   _buildPoolAndSlots() {
@@ -241,7 +407,7 @@ export class CommonGuess extends BaseGame {
     this.lastRoundResults = null;
 
     if (this.gamePool.length === 0) {
-      this._endGame();
+      this._onWordPoolExhausted();
       return;
     }
 
@@ -254,7 +420,11 @@ export class CommonGuess extends BaseGame {
 
     this.ctx.broadcast('NEW_ROUND', {
       roomCode: this.code,
+      kind: 'word',
       currentWord: this.currentWord,
+      prompt: this.prompt,
+      macroRound: this.currentMacroRoundIndex + 1,
+      totalMacroRounds: this.totalRounds,
       roundIndex: this.roundIndex,
       roundId: this.roundSeq,
       poolRemaining: this.gamePool.length,
@@ -362,23 +532,13 @@ export class CommonGuess extends BaseGame {
     this.betweenRoundTimer = setTimeout(() => {
       this.betweenRoundTimer = null;
       if (this.phase !== 'round_result') return;
-      this.phase = 'matching';
-      this._startRound();
+      if (this.gamePool.length === 0) {
+        this._onWordPoolExhausted();
+      } else {
+        this.phase = 'matching';
+        this._startRound();
+      }
     }, BETWEEN_ROUNDS_MS);
-  }
-
-  _endGame() {
-    this._clearRoundTimer();
-    this._clearBetweenRoundTimer();
-    this._clearRoundSubmitTimer();
-    this.phase = 'finished';
-    this.currentWord = null;
-    this._currentWordPoolIndex = -1;
-    if (typeof this.ctx.setRoomStatus === 'function') {
-      this.ctx.setRoomStatus('RESULTS');
-    }
-    this._rebuildClustersSummary();
-    this._emitUpdate();
   }
 
   _rebuildClustersSummary() {
@@ -449,6 +609,8 @@ export class CommonGuess extends BaseGame {
       submissionsReceived: this.roundSubmissions.size,
       totalPlayers: players.size,
       lastRoundResults: this.lastRoundResults,
+      macroRound: this.currentMacroRoundIndex + 1,
+      totalMacroRounds: this.totalRounds,
     };
   }
 
@@ -508,6 +670,8 @@ export class CommonGuess extends BaseGame {
         this.phase === 'matching' && this.roundSubmissions.has(playerId),
       lastRoundResults: this.lastRoundResults,
       leaderboard,
+      macroRound: this.currentMacroRoundIndex + 1,
+      totalMacroRounds: this.totalRounds,
     };
   }
 

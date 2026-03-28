@@ -1,5 +1,17 @@
 import { useEffect, useState } from 'react';
-import { motion } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
+
+function RoundStrip({ state, className = '' }) {
+  const mr = state?.macroRound ?? 1;
+  const tr = state?.totalMacroRounds ?? 1;
+  return (
+    <p
+      className={`text-center text-amber-200/90 text-sm font-semibold tracking-wide ${className}`}
+    >
+      Раунд {mr} из {tr}
+    </p>
+  );
+}
 
 export default function CommonGuessHost({ state, roomCode, socket }) {
   const [now, setNow] = useState(Date.now());
@@ -15,6 +27,7 @@ export default function CommonGuessHost({ state, roomCode, socket }) {
   const collecting = state.phase === 'collecting';
   const matching = state.phase === 'matching';
   const roundResult = state.phase === 'round_result';
+  const betweenMacros = state.phase === 'between_macros';
   const finished = state.phase === 'finished';
 
   const secLeft =
@@ -39,12 +52,34 @@ export default function CommonGuessHost({ state, roomCode, socket }) {
   return (
     <div className="rounded-2xl border border-violet-500/30 bg-violet-950/40 p-6 text-left">
       <h2 className="text-2xl font-bold text-violet-200 mb-2 text-center">Common Guess</h2>
+      <RoundStrip state={state} className="mb-2" />
       <p className="text-slate-200 text-center text-lg mb-4 min-h-[3rem]">
         {state.prompt || 'Вопрос'}
       </p>
       <p className="text-center text-slate-500 text-sm mb-2">
         До {state.maxWords ?? 5} слов с телефона · {state.roundSeconds ?? 60} с на сбор слов
       </p>
+
+      <AnimatePresence mode="wait">
+        {betweenMacros && (
+          <motion.div
+            key="between-macros"
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -12 }}
+            transition={{ duration: 0.35 }}
+            className="text-center py-10 rounded-xl bg-slate-900/70 border border-violet-600/30 mb-4"
+          >
+            <p className="text-violet-300 text-sm uppercase tracking-wider mb-3">
+              Следующий вопрос
+            </p>
+            <p className="text-white text-xl md:text-2xl font-medium px-4">
+              {state.prompt}
+            </p>
+            <p className="text-slate-500 text-sm mt-4">Готовимся к вводу слов…</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {(matching || roundResult) && (
         <p className="text-center text-slate-400 text-sm mb-4">
@@ -92,6 +127,9 @@ export default function CommonGuessHost({ state, roomCode, socket }) {
           className="space-y-4"
         >
           <div className="text-center rounded-xl bg-slate-900/70 border border-slate-700 py-6">
+            <p className="text-slate-500 text-xs mb-2 line-clamp-3 px-2">
+              {state.prompt}
+            </p>
             <p className="text-slate-500 text-xs uppercase tracking-wider mb-2">
               Слово раунда
             </p>
@@ -99,7 +137,7 @@ export default function CommonGuessHost({ state, roomCode, socket }) {
               {state.currentWord ?? '…'}
             </p>
             <p className="text-slate-500 text-sm mt-3">
-              Раунд {state.roundIndex ?? 0}
+              Ход по словам: {state.roundIndex ?? 0}
             </p>
           </div>
           <div className="rounded-xl bg-slate-900/60 py-4 text-center">
@@ -118,8 +156,9 @@ export default function CommonGuessHost({ state, roomCode, socket }) {
           animate={{ opacity: 1, y: 0 }}
           className="space-y-4"
         >
+          <RoundStrip state={state} />
           <div className="text-center rounded-xl bg-emerald-950/30 border border-emerald-800/40 py-5">
-            <p className="text-slate-500 text-xs mb-1">Итог раунда</p>
+            <p className="text-slate-500 text-xs mb-1">Итог хода</p>
             <p className="text-2xl font-bold text-white capitalize">{lr.currentWord}</p>
             {lr.pointsPerMatcher > 0 ? (
               <p className="text-emerald-400 text-sm mt-2">
@@ -156,6 +195,52 @@ export default function CommonGuessHost({ state, roomCode, socket }) {
           animate={{ opacity: 1, y: 0 }}
           className="space-y-6"
         >
+          <p className="text-center text-2xl font-black text-amber-200">Финал</p>
+          <div className="flex justify-center items-end gap-2 md:gap-4 pt-2 pb-4">
+            {[
+              { lbIndex: 1, place: 2 },
+              { lbIndex: 0, place: 1 },
+              { lbIndex: 2, place: 3 },
+            ].map(({ lbIndex, place }) => {
+              const row = state.leaderboard[lbIndex];
+              if (!row) return <div key={place} className="flex-1 max-w-[8rem]" />;
+              const h =
+                place === 1
+                  ? 'min-h-[11rem] md:min-h-[13rem]'
+                  : place === 2
+                    ? 'min-h-[9rem] md:min-h-[11rem]'
+                    : 'min-h-[7rem] md:min-h-[9rem]';
+              const medal = place === 1 ? '🥇' : place === 2 ? '🥈' : '🥉';
+              return (
+                <motion.div
+                  key={row.playerId}
+                  initial={{ opacity: 0, y: 24 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: place * 0.08 }}
+                  className="flex-1 max-w-[9rem] flex flex-col items-center justify-end"
+                >
+                  <div
+                    className={`w-full rounded-t-xl flex flex-col justify-end items-center pb-3 px-1 border flex-1 ${h} ${
+                      place === 1
+                        ? 'bg-amber-500/20 border-amber-500/50'
+                        : place === 2
+                          ? 'bg-slate-400/15 border-slate-400/40'
+                          : 'bg-orange-900/25 border-orange-700/40'
+                    }`}
+                  >
+                    <span className="text-2xl mb-1">{medal}</span>
+                    <span className="text-slate-100 text-sm font-semibold text-center line-clamp-2">
+                      {row.name}
+                    </span>
+                    <span className="text-emerald-400 font-mono font-bold text-lg mt-1">
+                      {row.score}
+                    </span>
+                  </div>
+                </motion.div>
+              );
+            })}
+          </div>
+
           {state.clusters && state.clusters.length > 0 && (
             <div>
               <h3 className="text-sm uppercase tracking-wider text-slate-500 mb-3">

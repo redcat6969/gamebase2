@@ -3,6 +3,18 @@ import { AnimatePresence, motion } from 'framer-motion';
 
 const BLANK = () => ['', '', '', '', ''];
 
+function RoundStrip({ state, className = '' }) {
+  const mr = state?.macroRound ?? 1;
+  const tr = state?.totalMacroRounds ?? 1;
+  return (
+    <p
+      className={`text-center text-amber-200/90 text-sm font-semibold tracking-wide ${className}`}
+    >
+      Раунд {mr} из {tr}
+    </p>
+  );
+}
+
 export default function CommonGuessPlayer({
   state,
   roomCode,
@@ -14,7 +26,7 @@ export default function CommonGuessPlayer({
   const [lastAck, setLastAck] = useState(null);
   const [now, setNow] = useState(Date.now());
   const fieldsRef = useRef(fields);
-  const lastDeadlineRef = useRef(null);
+  const lastCollectingKeyRef = useRef(null);
 
   /** Локальный список оставшихся слов (синхронизируется с сервером) */
   const [myWords, setMyWords] = useState([]);
@@ -28,6 +40,7 @@ export default function CommonGuessPlayer({
   const collecting = state?.phase === 'collecting';
   const matching = state?.phase === 'matching';
   const roundResult = state?.phase === 'round_result';
+  const betweenMacros = state?.phase === 'between_macros';
   const finished = state?.phase === 'finished';
 
   const secLeft =
@@ -43,11 +56,12 @@ export default function CommonGuessPlayer({
 
   useEffect(() => {
     if (!collecting || !state?.deadlineAt) return;
-    if (lastDeadlineRef.current === state.deadlineAt) return;
-    lastDeadlineRef.current = state.deadlineAt;
+    const key = `${state.deadlineAt}-${state.macroRound ?? 0}`;
+    if (lastCollectingKeyRef.current === key) return;
+    lastCollectingKeyRef.current = key;
     setFields(BLANK());
     setLastAck(null);
-  }, [collecting, state?.deadlineAt]);
+  }, [collecting, state?.deadlineAt, state?.macroRound]);
 
   // Синхронизация myWords с сервером (оставшиеся слоты)
   const remKey = JSON.stringify(state?.remainingWords ?? null);
@@ -55,12 +69,20 @@ export default function CommonGuessPlayer({
     if (state?.remainingWords && (matching || roundResult || finished)) {
       setMyWords(state.remainingWords);
     }
-    if (collecting) {
+    if (collecting || betweenMacros) {
       setMyWords([]);
       setSelectedWordId(null);
       setDeclaredNoWord(false);
     }
-  }, [collecting, matching, roundResult, finished, remKey, state?.remainingWords]);
+  }, [
+    collecting,
+    betweenMacros,
+    matching,
+    roundResult,
+    finished,
+    remKey,
+    state?.remainingWords,
+  ]);
 
   // Новый раунд — сброс выбора
   useEffect(() => {
@@ -172,6 +194,26 @@ export default function CommonGuessPlayer({
 
   if (!state) return null;
 
+  if (betweenMacros) {
+    return (
+      <motion.div
+        key="between-macros"
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -8 }}
+        transition={{ duration: 0.35 }}
+        className="flex flex-col gap-4 max-w-md mx-auto px-4 text-center py-8"
+      >
+        <RoundStrip state={state} />
+        <p className="text-violet-300 text-sm uppercase tracking-wider">
+          Новый вопрос
+        </p>
+        <p className="text-white text-xl font-medium leading-snug">{state.prompt}</p>
+        <p className="text-slate-500 text-sm">Скоро снова введите 5 слов…</p>
+      </motion.div>
+    );
+  }
+
   if (finished) {
     const details = state.wordDetails ?? [];
     return (
@@ -181,6 +223,46 @@ export default function CommonGuessPlayer({
         className="flex flex-col gap-4 max-w-md mx-auto px-4"
       >
         <p className="text-slate-400 text-sm text-center">Игра окончена</p>
+        <RoundStrip state={state} />
+        {state.leaderboard && state.leaderboard.length >= 1 && (
+          <div className="flex justify-center items-end gap-2 pt-2">
+            {[
+              { lbIndex: 1, place: 2 },
+              { lbIndex: 0, place: 1 },
+              { lbIndex: 2, place: 3 },
+            ].map(({ lbIndex, place }) => {
+              const row = state.leaderboard[lbIndex];
+              if (!row) return <div key={place} className="flex-1 max-w-[5.5rem]" />;
+              const medal = place === 1 ? '🥇' : place === 2 ? '🥈' : '🥉';
+              const box =
+                place === 1
+                  ? 'min-h-[6.5rem] bg-amber-500/15 border-amber-500/40'
+                  : place === 2
+                    ? 'min-h-[5rem] bg-slate-500/10 border-slate-500/35'
+                    : 'min-h-[4rem] bg-orange-900/20 border-orange-800/35';
+              return (
+                <motion.div
+                  key={row.playerId}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="flex-1 max-w-[6rem]"
+                >
+                  <div
+                    className={`rounded-t-lg border flex flex-col items-center justify-end p-2 ${box}`}
+                  >
+                    <span className="text-lg">{medal}</span>
+                    <span className="text-xs text-slate-200 text-center line-clamp-2 font-medium">
+                      {row.name}
+                    </span>
+                    <span className="text-emerald-400 font-mono text-sm font-bold">
+                      {row.score}
+                    </span>
+                  </div>
+                </motion.div>
+              );
+            })}
+          </div>
+        )}
         <div className="rounded-2xl border border-slate-700 bg-slate-900/80 p-4">
           <p className="text-slate-500 text-sm mb-2">Твои слова (ввод)</p>
           <ul className="space-y-1 text-left">
@@ -259,8 +341,9 @@ export default function CommonGuessPlayer({
         animate={{ opacity: 1, y: 0 }}
         className="flex flex-col gap-4 max-w-md mx-auto px-4"
       >
+        <RoundStrip state={state} />
         <p className="text-center text-violet-300 text-sm uppercase tracking-wider">
-          Итог раунда
+          Итог хода
         </p>
         <div className="rounded-2xl border border-violet-500/30 bg-violet-950/40 p-5 text-center">
           <p className="text-slate-500 text-xs mb-1">Слово раунда</p>
@@ -293,7 +376,11 @@ export default function CommonGuessPlayer({
     return (
       <div className="flex flex-col gap-4 max-w-md mx-auto px-4">
         <div className="text-center space-y-1">
-          <p className="text-slate-500 text-xs uppercase tracking-wider">
+          <RoundStrip state={state} />
+          <p className="text-slate-500 text-xs line-clamp-3 px-1 leading-snug">
+            {state.prompt}
+          </p>
+          <p className="text-slate-500 text-xs uppercase tracking-wider pt-1">
             Слово раунда
           </p>
           <motion.p
@@ -307,7 +394,7 @@ export default function CommonGuessPlayer({
           <p className="text-slate-500 text-sm">
             Осталось слов: {poolRemaining}/{poolTotal || poolRemaining}
           </p>
-          <p className="text-slate-600 text-xs">Раунд {state.roundIndex ?? 0}</p>
+          <p className="text-slate-600 text-xs">Ход по словам: {state.roundIndex ?? 0}</p>
         </div>
 
         <div>
@@ -374,7 +461,11 @@ export default function CommonGuessPlayer({
 
   return (
     <div className="flex flex-col gap-4 max-w-md mx-auto px-4">
-      <div className="text-center">
+      <div className="text-center space-y-2">
+        <RoundStrip state={state} />
+        <p className="text-slate-200 text-base font-medium leading-snug px-1">
+          {state.prompt}
+        </p>
         <p
           className={`text-4xl font-mono font-bold ${
             secLeft <= 10 && secLeft > 0 ? 'text-red-400' : 'text-white'
@@ -383,7 +474,7 @@ export default function CommonGuessPlayer({
           {mm}:{ss}
         </p>
         <p className="text-slate-500 text-xs mt-1">
-          До {maxW} слов · подсказка на ТВ
+          До {maxW} слов · вопрос дублируется на ТВ
         </p>
       </div>
       <div className="space-y-2">
