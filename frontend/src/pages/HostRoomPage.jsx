@@ -1,6 +1,6 @@
 import { useParams, useNavigate } from 'react-router-dom';
-import { useEffect, useState, useMemo } from 'react';
-import { motion } from 'framer-motion';
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import QRCode from 'qrcode';
 import { getSocket } from '../socket.js';
 import GameContainer from '../components/GameContainer.jsx';
@@ -10,16 +10,34 @@ function normalizeRoomCode(code) {
   return d.length === 4 ? d : '';
 }
 
+function storageKeyCreator(code) {
+  return `gamebase_creator_${code}`;
+}
+
+function readCreatorSession(code) {
+  try {
+    const raw = sessionStorage.getItem(storageKeyCreator(code));
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
 export default function HostRoomPage() {
   const { code: codeParam } = useParams();
   const nav = useNavigate();
   const [socket] = useState(() => getSocket());
-  const [lobby, setLobby] = useState(null);
+  const [room, setRoom] = useState(null);
   const [gameState, setGameState] = useState(null);
   const [roomStatus, setRoomStatus] = useState(null);
   const [qrDataUrl, setQrDataUrl] = useState('');
   const [hostError, setHostError] = useState('');
   const [startError, setStartError] = useState('');
+  const [creatorName, setCreatorName] = useState('');
+  const [playerId, setPlayerId] = useState(null);
+  const [creating, setCreating] = useState(false);
+  const creatorNameSubmittedRef = useRef('');
 
   const code =
     codeParam === 'new' ? null : normalizeRoomCode(codeParam) || codeParam;
@@ -34,9 +52,13 @@ export default function HostRoomPage() {
     QRCode.toDataURL(playUrl, { margin: 1, width: 220 }).then(setQrDataUrl);
   }, [code, playUrl]);
 
+  const persistCreator = useCallback((c, data) => {
+    sessionStorage.setItem(storageKeyCreator(c), JSON.stringify(data));
+  }, []);
+
   useEffect(() => {
-    function onLobby(p) {
-      setLobby(p);
+    function onRoomUpdate(p) {
+      setRoom(p);
       setRoomStatus(p?.status ?? null);
       setHostError('');
       if (p?.status === 'PLAYING' || p?.status === 'RESULTS') setStartError('');
@@ -45,41 +67,88 @@ export default function HostRoomPage() {
       setGameState(p?.state ?? null);
       if (p?.roomStatus) setRoomStatus(p.roomStatus);
     }
-    function onRoomCreated({ code: created }) {
+    function onRoomCreated(p) {
+      const created = p.code;
+      setCreating(false);
+      if (p.playerId && p.sessionToken) {
+        persistCreator(created, {
+          playerId: p.playerId,
+          sessionToken: p.sessionToken,
+          name: creatorNameSubmittedRef.current,
+        });
+        setPlayerId(p.playerId);
+      }
       nav(`/room/${created}/host`, { replace: true });
     }
+    function onRoomJoined(p) {
+      if (p.role !== 'player' || !p.isCreator) return;
+      setPlayerId(p.playerId);
+      if (p.sessionToken && code) {
+        persistCreator(code, {
+          playerId: p.playerId,
+          sessionToken: p.sessionToken,
+          name: readCreatorSession(code)?.name ?? '',
+        });
+      }
+    }
     function onErr(p) {
-      setHostError(p?.message ?? p?.code ?? 'Ошибка');
+      const msg = p?.message ?? p?.code ?? 'Ошибка';
+      setHostError(msg);
+      setCreating(false);
     }
     function onStartFailed(p) {
       const map = {
-        NOT_HOST: 'Это не сессия хоста. Закрой лишние вкладки с этой комнатой и обнови страницу (F5).',
+        NOT_HOST: 'Только создатель может начать игру.',
         NEED_PLAYERS: 'Нужен хотя бы один игрок в комнате.',
-        ROOM_NOT_FOUND: 'Комната не найдена на сервере (перезапусти бэкенд или создай комнату заново).',
+        ROOM_NOT_FOUND: 'Комната не найдена на сервере.',
       };
       setStartError(map[p?.code] ?? p?.message ?? p?.code ?? 'Не удалось начать игру');
     }
 
-    socket.on('lobby_update', onLobby);
+    socket.on('room_update', onRoomUpdate);
     socket.on('game_update', onGameUpdate);
     socket.on('room_created', onRoomCreated);
+    socket.on('room_joined', onRoomJoined);
     socket.on('error_msg', onErr);
     socket.on('start_game_failed', onStartFailed);
 
     if (codeParam === 'new') {
-      socket.emit('host_create_room');
+      // комната создаётся после ввода имени (форма ниже)
     } else if (code) {
-      socket.emit('host_rejoin', { code: normalizeRoomCode(code) || code });
+      const saved = readCreatorSession(code);
+      socket.emit('host_rejoin', {
+        code: normalizeRoomCode(code) || code,
+        sessionToken: saved?.sessionToken ?? null,
+      });
+      if (saved?.playerId) setPlayerId(saved.playerId);
     }
 
     return () => {
-      socket.off('lobby_update', onLobby);
+      socket.off('room_update', onRoomUpdate);
       socket.off('game_update', onGameUpdate);
       socket.off('room_created', onRoomCreated);
+      socket.off('room_joined', onRoomJoined);
       socket.off('error_msg', onErr);
       socket.off('start_game_failed', onStartFailed);
     };
-  }, [code, codeParam, nav, socket]);
+  }, [code, codeParam, nav, socket, persistCreator]);
+
+  function submitCreateRoom(e) {
+    e.preventDefault();
+    setHostError('');
+    const name = creatorName.trim();
+    if (!name) {
+      setHostError('Введите имя');
+      return;
+    }
+    setCreating(true);
+    creatorNameSubmittedRef.current = name;
+    const saved = code ? readCreatorSession(code) : null;
+    socket.emit('host_create_room', {
+      creatorName: name,
+      sessionToken: saved?.sessionToken ?? null,
+    });
+  }
 
   function startGame() {
     const c = normalizeRoomCode(code);
@@ -99,12 +168,47 @@ export default function HostRoomPage() {
   }
 
   const inGame = roomStatus === 'PLAYING' || roomStatus === 'RESULTS';
-  const gameType = lobby?.gameType ?? (inGame ? 'common_guess' : null);
+  const gameType = room?.gameType ?? (inGame ? 'common_guess' : null);
+
+  const creatorPlayerId = room?.creatorPlayerId ?? null;
+  const myId = playerId ?? readCreatorSession(code)?.playerId ?? null;
+  const canStart =
+    Boolean(creatorPlayerId && myId && creatorPlayerId === myId) &&
+    room?.status === 'LOBBY';
+
+  const participants = room?.participants ?? [];
 
   if (codeParam === 'new') {
     return (
-      <div className="min-h-screen flex items-center justify-center text-slate-400">
-        {hostError || 'Создаём комнату…'}
+      <div className="min-h-screen flex flex-col justify-center px-4 py-8">
+        <motion.form
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          onSubmit={submitCreateRoom}
+          className="max-w-md mx-auto w-full flex flex-col gap-4"
+        >
+          <h1 className="text-2xl font-bold text-center">Новая комната</h1>
+          <label className="text-sm text-slate-500">Ваше имя</label>
+          <input
+            value={creatorName}
+            onChange={(e) => setCreatorName(e.target.value)}
+            placeholder="Как к вам обращаться"
+            className="rounded-xl bg-slate-900 border border-slate-700 px-4 py-4 text-lg"
+            maxLength={32}
+            required
+            autoFocus
+          />
+          <button
+            type="submit"
+            disabled={creating}
+            className="rounded-xl bg-violet-600 hover:bg-violet-500 disabled:opacity-50 py-4 text-lg font-semibold"
+          >
+            {creating ? 'Создаём…' : 'Создать комнату'}
+          </button>
+          {hostError && (
+            <p className="text-red-400 text-sm text-center">{hostError}</p>
+          )}
+        </motion.form>
       </div>
     );
   }
@@ -138,37 +242,72 @@ export default function HostRoomPage() {
           )}
         </header>
 
-        <section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6 mb-6">
-          <h2 className="text-lg font-semibold text-slate-300 mb-3">Игроки</h2>
-          <ul className="space-y-2">
-            {(lobby?.players ?? []).map((p) => (
-              <li key={p.id} className="text-slate-200">
-                {p.name}
-              </li>
-            ))}
-            {(!lobby?.players || lobby.players.length === 0) && (
-              <li className="text-slate-500">Пока никого…</li>
-            )}
-          </ul>
-        </section>
+        <AnimatePresence mode="wait">
+          {!inGame ? (
+            <motion.section
+              key="lobby"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.3 }}
+              className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6 mb-6"
+            >
+              <h2 className="text-lg font-semibold text-slate-300 mb-3">Участники</h2>
+              <ul className="space-y-2">
+                {participants.map((p) => (
+                  <li
+                    key={p.id}
+                    className="flex flex-wrap items-center gap-2 text-slate-200"
+                  >
+                    <span>
+                      {p.role === 'spectator'
+                        ? 'Зритель'
+                        : p.name || 'Игрок'}
+                    </span>
+                    {p.isCreator && (
+                      <span className="text-xs font-semibold uppercase tracking-wide text-violet-300 bg-violet-950/80 border border-violet-600/40 px-2 py-0.5 rounded-md">
+                        Создатель
+                      </span>
+                    )}
+                    {p.role === 'spectator' && (
+                      <span className="text-xs text-slate-500">(только просмотр)</span>
+                    )}
+                  </li>
+                ))}
+                {participants.length === 0 && (
+                  <li className="text-slate-500">Загрузка списка…</li>
+                )}
+              </ul>
 
-        {!inGame && (
-          <button
-            type="button"
-            onClick={startGame}
-            className="w-full rounded-2xl bg-fuchsia-600 hover:bg-fuchsia-500 py-4 text-xl font-bold mb-8"
-          >
-            Начать Common Guess
-          </button>
-        )}
+              {canStart && (
+                <button
+                  type="button"
+                  onClick={startGame}
+                  className="mt-6 w-full rounded-2xl bg-fuchsia-600 hover:bg-fuchsia-500 py-4 text-xl font-bold"
+                >
+                  Начать игру
+                </button>
+              )}
+            </motion.section>
+          ) : null}
+        </AnimatePresence>
 
-        <GameContainer
-          role="host"
-          gameType={inGame ? gameType : null}
-          gameState={gameState}
-          roomCode={code}
-          socket={socket}
-        />
+        <motion.div
+          key={inGame ? 'play' : 'idle'}
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+        >
+          <GameContainer
+            role="player"
+            gameType={inGame ? gameType : null}
+            gameState={gameState}
+            roomCode={code}
+            socket={socket}
+            playerId={myId}
+            isCreator={Boolean(creatorPlayerId && myId && creatorPlayerId === myId)}
+          />
+        </motion.div>
       </motion.div>
     </div>
   );

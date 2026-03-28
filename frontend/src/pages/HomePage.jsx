@@ -11,13 +11,26 @@ export default function HomePage() {
     nav('/room/new/host');
   }
 
-  function joinAsPlayer() {
+  function validateCode() {
     const c = codeInput.replace(/\D/g, '').slice(0, 4);
     if (c.length !== 4) {
       setErr('Введите 4-значный код');
-      return;
+      return null;
     }
+    setErr('');
+    return c;
+  }
+
+  function joinAsPlayer() {
+    const c = validateCode();
+    if (!c) return;
     nav(`/room/${c}/play`);
+  }
+
+  function joinAsSpectatorFromHome() {
+    const c = validateCode();
+    if (!c) return;
+    nav(`/room/${c}/play`, { state: { joinAsSpectator: true } });
   }
 
   return (
@@ -39,8 +52,11 @@ export default function HomePage() {
           onClick={createRoom}
           className="rounded-2xl bg-violet-600 hover:bg-violet-500 py-4 text-lg font-semibold"
         >
-          Создать комнату (хост)
+          Создать комнату
         </button>
+        <p className="text-xs text-slate-600 text-center -mt-2">
+          На следующем шаге введите имя — вы будете в игре как игрок
+        </p>
 
         <div className="rounded-2xl border border-slate-800 p-4 flex flex-col gap-2">
           <label className="text-sm text-slate-500">Код комнаты</label>
@@ -59,6 +75,16 @@ export default function HomePage() {
           >
             Войти как игрок
           </button>
+          <button
+            type="button"
+            onClick={joinAsSpectatorFromHome}
+            className="rounded-xl border border-slate-600 bg-slate-900/80 hover:bg-slate-800 py-3 font-medium text-slate-200"
+          >
+            Войти как зритель
+          </button>
+          <p className="text-xs text-slate-600 text-center -mt-1">
+            Общий экран игры (как на ТВ), без ввода с телефона
+          </p>
         </div>
         {err && <p className="text-red-400 text-sm text-center">{err}</p>}
       </div>

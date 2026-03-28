@@ -3,15 +3,17 @@ import { BaseGame } from './BaseGame.js';
 /** До скольки слов принимаем с одного игрока */
 const MAX_WORDS = 5;
 const DEFAULT_ROUND_S = 60;
+const BETWEEN_ROUNDS_MS = 3000;
+const ROUND_SUBMIT_MS = 120000;
 
 export class CommonGuess extends BaseGame {
   constructor(ctx) {
     super(ctx);
     this.phase = 'idle';
     this.prompt = '';
-    /** @type {Map<string, string[]>} playerId -> нормализованные слова (уникальные, до MAX_WORDS) */
+    /** @type {Map<string, string[]>} playerId -> нормализованные слова */
     this.answers = new Map();
-    /** @type {Map<string, number>} playerId -> очки за раунд */
+    /** @type {Map<string, number>} playerId -> очки */
     this.scores = new Map();
     /** @type {{ key: string, count: number, playerIds: string[] }[]} */
     this.clusters = [];
@@ -19,8 +21,30 @@ export class CommonGuess extends BaseGame {
     this.deadlineAt = null;
     /** @type {ReturnType<typeof setTimeout> | null} */
     this.roundTimer = null;
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    this.betweenRoundTimer = null;
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    this.roundSubmitTimer = null;
     /** @type {number} */
     this.roundMs = DEFAULT_ROUND_S * 1000;
+
+    /** @type {string[]} слова в пуле (текущее слово раунда всё ещё в массиве до конца раунда) */
+    this.gamePool = [];
+    this.initialPoolSize = 0;
+    /** @type {string | null} */
+    this.currentWord = null;
+    /** индекс currentWord в gamePool для удаления одного вхождения */
+    this._currentWordPoolIndex = -1;
+    this.roundIndex = 0;
+    this.roundSeq = 0;
+    /** @type {Map<string, { id: string, text: string }[]>} */
+    this.playerWordSlots = new Map();
+    /** @type {Map<string, Set<string>>} */
+    this.remainingWordIds = new Map();
+    /** @type {Map<string, { matched: boolean, wordId: string | null }>} */
+    this.roundSubmissions = new Map();
+    /** @type {Record<string, unknown> | null} */
+    this.lastRoundResults = null;
   }
 
   /** @param {Record<string, unknown>} [options] */
@@ -34,11 +58,23 @@ export class CommonGuess extends BaseGame {
     this.answers.clear();
     this.scores.clear();
     this.clusters = [];
+    this.gamePool = [];
+    this.initialPoolSize = 0;
+    this.currentWord = null;
+    this._currentWordPoolIndex = -1;
+    this.roundIndex = 0;
+    this.roundSeq = 0;
+    this.playerWordSlots.clear();
+    this.remainingWordIds.clear();
+    this.roundSubmissions.clear();
+    this.lastRoundResults = null;
     this._clearRoundTimer();
+    this._clearBetweenRoundTimer();
+    this._clearRoundSubmitTimer();
 
     this.deadlineAt = Date.now() + this.roundMs;
     this.roundTimer = setTimeout(() => {
-      this._finalizeRound();
+      this._endCollectingPhase();
     }, this.roundMs);
 
     this._emitUpdate();
@@ -49,6 +85,11 @@ export class CommonGuess extends BaseGame {
    * @param {Record<string, unknown>} payload
    */
   onAction(playerId, payload) {
+    if (payload?.type === 'submit_match') {
+      this._onSubmitMatch(playerId, payload);
+      return;
+    }
+
     if (this.phase !== 'collecting') return;
     if (this.deadlineAt != null && Date.now() > this.deadlineAt) return;
 
@@ -69,17 +110,46 @@ export class CommonGuess extends BaseGame {
     this._emitUpdate();
   }
 
+  /**
+   * @param {string} playerId
+   * @param {Record<string, unknown>} payload
+   */
+  _onSubmitMatch(playerId, payload) {
+    if (this.phase !== 'matching') return;
+    const rid = Number(payload.roundId);
+    if (!Number.isFinite(rid) || rid !== this.roundSeq) return;
+    if (this.roundSubmissions.has(playerId)) return;
+
+    const matched = Boolean(payload.matched);
+    const wordId =
+      typeof payload.wordId === 'string' && payload.wordId.length > 0
+        ? payload.wordId
+        : null;
+
+    this.roundSubmissions.set(playerId, { matched, wordId });
+
+    this.ctx.emitToSocket(
+      this._socketIdForPlayer(playerId),
+      'submit_match_ack',
+      { ok: true }
+    );
+    this._emitUpdate();
+    this._tryResolveRound();
+  }
+
   /** @param {Record<string, unknown>} payload */
   onHostAction(payload) {
     const type = payload?.type;
     if (type === 'finalize_round' && this.phase === 'collecting') {
-      this._finalizeRound();
+      this._endCollectingPhase();
     }
   }
 
   onEnd() {
-    this.phase = 'ended';
+    this.phase = 'finished';
     this._clearRoundTimer();
+    this._clearBetweenRoundTimer();
+    this._clearRoundSubmitTimer();
   }
 
   broadcastState() {
@@ -97,21 +167,222 @@ export class CommonGuess extends BaseGame {
     }
   }
 
-  _finalizeRound() {
+  _clearBetweenRoundTimer() {
+    if (this.betweenRoundTimer != null) {
+      clearTimeout(this.betweenRoundTimer);
+      this.betweenRoundTimer = null;
+    }
+  }
+
+  _clearRoundSubmitTimer() {
+    if (this.roundSubmitTimer != null) {
+      clearTimeout(this.roundSubmitTimer);
+      this.roundSubmitTimer = null;
+    }
+  }
+
+  _endCollectingPhase() {
     if (this.phase !== 'collecting') return;
     this._clearRoundTimer();
-    this._computeResults();
-    this.phase = 'results';
+    this.deadlineAt = null;
+
+    this._buildPoolAndSlots();
+    if (this.gamePool.length === 0) {
+      this.phase = 'finished';
+      if (typeof this.ctx.setRoomStatus === 'function') {
+        this.ctx.setRoomStatus('RESULTS');
+      }
+      this._emitUpdate();
+      return;
+    }
+
+    if (typeof this.ctx.setRoomStatus === 'function') {
+      this.ctx.setRoomStatus('PLAYING');
+    }
+    this.phase = 'matching';
+    this.roundIndex = 0;
+    this._startRound();
+  }
+
+  _buildPoolAndSlots() {
+    const players = this.ctx.getPlayers();
+    this.gamePool = [];
+    this.playerWordSlots.clear();
+    this.remainingWordIds.clear();
+
+    for (const [pid] of players) {
+      const words = this.answers.get(pid) ?? [];
+      const slots = words.map((text, i) => ({
+        id: `${pid}:w${i}`,
+        text,
+      }));
+      this.playerWordSlots.set(pid, slots);
+      this.remainingWordIds.set(pid, new Set(slots.map((s) => s.id)));
+      for (const w of words) {
+        this.gamePool.push(w);
+      }
+    }
+
+    for (let i = this.gamePool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [this.gamePool[i], this.gamePool[j]] = [this.gamePool[j], this.gamePool[i]];
+    }
+
+    this.initialPoolSize = this.gamePool.length;
+
+    for (const [pid] of players) {
+      if (!this.scores.has(pid)) this.scores.set(pid, 0);
+    }
+  }
+
+  _startRound() {
+    this._clearBetweenRoundTimer();
+    this._clearRoundSubmitTimer();
+    this.lastRoundResults = null;
+
+    if (this.gamePool.length === 0) {
+      this._endGame();
+      return;
+    }
+
+    const idx = Math.floor(Math.random() * this.gamePool.length);
+    this._currentWordPoolIndex = idx;
+    this.currentWord = this.gamePool[idx];
+    this.roundIndex += 1;
+    this.roundSeq += 1;
+    this.roundSubmissions.clear();
+
+    this.ctx.broadcast('NEW_ROUND', {
+      roomCode: this.code,
+      currentWord: this.currentWord,
+      roundIndex: this.roundIndex,
+      roundId: this.roundSeq,
+      poolRemaining: this.gamePool.length,
+      poolTotal: this.initialPoolSize,
+    });
+
+    this._emitUpdate();
+
+    this.roundSubmitTimer = setTimeout(() => {
+      this._autoFillMissingSubmissions();
+    }, ROUND_SUBMIT_MS);
+  }
+
+  _autoFillMissingSubmissions() {
+    if (this.phase !== 'matching') return;
+    const players = this.ctx.getPlayers();
+    for (const pid of players.keys()) {
+      if (!this.roundSubmissions.has(pid)) {
+        this.roundSubmissions.set(pid, { matched: false, wordId: null });
+      }
+    }
+    this._tryResolveRound();
+  }
+
+  _tryResolveRound() {
+    if (this.phase !== 'matching') return;
+    const players = this.ctx.getPlayers();
+    if (this.roundSubmissions.size < players.size) return;
+    this._clearRoundSubmitTimer();
+    this._resolveRound();
+  }
+
+  _resolveRound() {
+    const currentWord = this.currentWord;
+    if (currentWord == null) return;
+
+    const idx = this._currentWordPoolIndex;
+    if (idx >= 0 && idx < this.gamePool.length && this.gamePool[idx] === currentWord) {
+      this.gamePool.splice(idx, 1);
+    } else {
+      const i = this.gamePool.indexOf(currentWord);
+      if (i >= 0) this.gamePool.splice(i, 1);
+    }
+    this._currentWordPoolIndex = -1;
+
+    /** @type {string[]} */
+    const validMatchers = [];
+
+    for (const [pid, sub] of this.roundSubmissions) {
+      const rem = this.remainingWordIds.get(pid);
+      const slots = this.playerWordSlots.get(pid) ?? [];
+      let valid = false;
+      if (sub.matched && sub.wordId && rem?.has(sub.wordId)) {
+        const slot = slots.find((s) => s.id === sub.wordId);
+        if (slot && slot.text === currentWord) valid = true;
+      }
+      if (valid) validMatchers.push(pid);
+    }
+
+    const N = validMatchers.length;
+    const pointsPerMatcher = N >= 2 ? N : 0;
+
+    if (pointsPerMatcher > 0) {
+      for (const pid of validMatchers) {
+        this.scores.set(pid, (this.scores.get(pid) ?? 0) + pointsPerMatcher);
+        const sub = this.roundSubmissions.get(pid);
+        if (sub?.wordId) {
+          this.remainingWordIds.get(pid)?.delete(sub.wordId);
+        }
+      }
+    }
+
+    const players = this.ctx.getPlayers();
+    const matchersPayload = validMatchers.map((pid) => {
+      const p = players.get(pid);
+      return {
+        playerId: pid,
+        name: p?.name ?? '?',
+        pointsAdded: pointsPerMatcher,
+      };
+    });
+
+    this.lastRoundResults = {
+      currentWord,
+      roundId: this.roundSeq,
+      matchers: matchersPayload,
+      pointsPerMatcher,
+      validMatcherIds: validMatchers,
+    };
+
+    this.ctx.broadcast('ROUND_RESULTS', {
+      roomCode: this.code,
+      currentWord,
+      roundId: this.roundSeq,
+      matchers: matchersPayload,
+      pointsPerMatcher,
+      scores: Object.fromEntries(this.scores),
+    });
+
+    this.currentWord = null;
+    this.phase = 'round_result';
+    this._emitUpdate();
+
+    this._clearBetweenRoundTimer();
+    this.betweenRoundTimer = setTimeout(() => {
+      this.betweenRoundTimer = null;
+      if (this.phase !== 'round_result') return;
+      this.phase = 'matching';
+      this._startRound();
+    }, BETWEEN_ROUNDS_MS);
+  }
+
+  _endGame() {
+    this._clearRoundTimer();
+    this._clearBetweenRoundTimer();
+    this._clearRoundSubmitTimer();
+    this.phase = 'finished';
+    this.currentWord = null;
+    this._currentWordPoolIndex = -1;
     if (typeof this.ctx.setRoomStatus === 'function') {
       this.ctx.setRoomStatus('RESULTS');
     }
+    this._rebuildClustersSummary();
     this._emitUpdate();
   }
 
-  _computeResults() {
-    /** @type {Map<string, Set<string>>} слово -> игроки, у кого оно есть */
+  _rebuildClustersSummary() {
     const wordPlayers = new Map();
-
     for (const [pid, words] of this.answers) {
       const seen = new Set(words);
       for (const w of seen) {
@@ -119,7 +390,6 @@ export class CommonGuess extends BaseGame {
         wordPlayers.get(w).add(pid);
       }
     }
-
     this.clusters = [...wordPlayers.entries()]
       .map(([key, pidSet]) => ({
         key,
@@ -127,14 +397,6 @@ export class CommonGuess extends BaseGame {
         playerIds: [...pidSet],
       }))
       .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
-
-    this.scores.clear();
-    for (const c of this.clusters) {
-      if (c.count < 2) continue;
-      for (const pid of c.playerIds) {
-        this.scores.set(pid, (this.scores.get(pid) ?? 0) + 1);
-      }
-    }
   }
 
   getHostState() {
@@ -179,13 +441,27 @@ export class CommonGuess extends BaseGame {
       totalWords,
       clusters,
       leaderboard,
+      currentWord: this.currentWord,
+      roundIndex: this.roundIndex,
+      roundId: this.roundSeq,
+      poolRemaining: this.gamePool.length,
+      poolTotal: this.initialPoolSize,
+      submissionsReceived: this.roundSubmissions.size,
+      totalPlayers: players.size,
+      lastRoundResults: this.lastRoundResults,
     };
   }
 
   /** @param {string} playerId */
   getPlayerState(playerId) {
-    const myWords = this.answers.get(playerId) ?? [];
+    const myWordsRaw = this.answers.get(playerId) ?? [];
     const score = this.scores.get(playerId) ?? 0;
+
+    const slots = this.playerWordSlots.get(playerId) ?? [];
+    const rem = this.remainingWordIds.get(playerId) ?? new Set();
+    const remainingWords = slots
+      .filter((s) => rem.has(s.id))
+      .map((s) => ({ id: s.id, word: s.text }));
 
     const wordPlayers = new Map();
     for (const [pid, words] of this.answers) {
@@ -195,11 +471,20 @@ export class CommonGuess extends BaseGame {
       }
     }
 
-    const wordDetails = myWords.map((w) => {
+    const wordDetails = myWordsRaw.map((w) => {
       const set = wordPlayers.get(w);
       const matched = set != null && set.size >= 2;
       return { word: w, matched };
     });
+
+    const players = this.ctx.getPlayers();
+    const leaderboard = [...players.values()]
+      .map((p) => ({
+        playerId: p.id,
+        name: p.name,
+        score: this.scores.get(p.id) ?? 0,
+      }))
+      .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
 
     return {
       gameType: 'common_guess',
@@ -209,10 +494,20 @@ export class CommonGuess extends BaseGame {
       maxWords: MAX_WORDS,
       roundSeconds: Math.round(this.roundMs / 1000),
       deadlineAt: this.deadlineAt,
-      myWords,
+      myWords: myWordsRaw,
+      remainingWords,
       myScore: score,
       wordDetails,
-      submitted: myWords.length > 0,
+      submitted: myWordsRaw.length > 0,
+      currentWord: this.currentWord,
+      roundIndex: this.roundIndex,
+      roundId: this.roundSeq,
+      poolRemaining: this.gamePool.length,
+      poolTotal: this.initialPoolSize,
+      hasSubmittedRound:
+        this.phase === 'matching' && this.roundSubmissions.has(playerId),
+      lastRoundResults: this.lastRoundResults,
+      leaderboard,
     };
   }
 
@@ -258,24 +553,42 @@ export class CommonGuess extends BaseGame {
         ? this.ctx.getRoomStatus()
         : 'PLAYING';
 
-    const hostId = this.ctx.getHostSocketId
-      ? this.ctx.getHostSocketId()
-      : '';
+    const payloadBase = { roomCode: this.code, roomStatus };
 
-    if (hostId) {
-      this.ctx.emitToSocket(hostId, 'game_update', {
-        roomCode: this.code,
-        roomStatus,
-        state: this.getHostState(),
-      });
+    if (typeof this.ctx.getParticipants === 'function') {
+      for (const [pid, p] of this.ctx.getParticipants()) {
+        if (p.role === 'spectator') {
+          this.ctx.emitToSocket(p.socketId, 'game_update', {
+            ...payloadBase,
+            state: this.getHostState(),
+          });
+        } else {
+          this.ctx.emitToSocket(p.socketId, 'game_update', {
+            ...payloadBase,
+            state: this.getPlayerState(pid),
+          });
+        }
+      }
+    } else {
+      const hostId = this.ctx.getHostSocketId
+        ? this.ctx.getHostSocketId()
+        : '';
+      if (hostId) {
+        this.ctx.emitToSocket(hostId, 'game_update', {
+          ...payloadBase,
+          state: this.getHostState(),
+        });
+      }
+      for (const [pid, pl] of this.ctx.getPlayers()) {
+        this.ctx.emitToSocket(pl.socketId, 'game_update', {
+          ...payloadBase,
+          state: this.getPlayerState(pid),
+        });
+      }
     }
 
-    for (const [pid, p] of this.ctx.getPlayers()) {
-      this.ctx.emitToSocket(p.socketId, 'game_update', {
-        roomCode: this.code,
-        roomStatus,
-        state: this.getPlayerState(pid),
-      });
+    if (typeof this.ctx.syncPlayerScores === 'function') {
+      this.ctx.syncPlayerScores(this.scores);
     }
   }
 }

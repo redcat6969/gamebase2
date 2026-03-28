@@ -22,37 +22,87 @@ app.get('/health', (_req, res) => {
 });
 
 io.on('connection', (socket) => {
-  socket.on('host_create_room', () => {
+  socket.on('host_create_room', (payload = {}) => {
     try {
+      const sessionToken = payload.sessionToken ? String(payload.sessionToken) : null;
       if (socket.data.hostRoomCode) {
         const code = socket.data.hostRoomCode;
         const room = rooms.getRoom(code);
         if (room) {
-          rooms.attachHostSocket(code, socket.id);
-          socket.emit('room_created', { code, role: 'host' });
-          socket.emit('lobby_update', rooms.serializeLobby(room));
+          const r = rooms.attachHostSocket(code, socket.id, sessionToken);
+          if (!r.ok) {
+            socket.emit('error_msg', { code: r.error });
+            return;
+          }
+          const creator = r.room.players.get(r.room.creatorPlayerId ?? '');
+          socket.emit('room_created', {
+            code,
+            role: 'player',
+            playerId: creator?.id,
+            sessionToken: creator?.sessionToken,
+            isCreator: true,
+          });
+          socket.emit('room_update', rooms.serializeRoom(r.room));
           return;
         }
         delete socket.data.hostRoomCode;
       }
-      const { code } = rooms.createRoom(socket.id);
+
+      const creatorName = String(payload.creatorName ?? payload.name ?? '').trim();
+      if (!creatorName) {
+        socket.emit('error_msg', {
+          code: 'CREATOR_NAME_REQUIRED',
+          message: 'Введите имя создателя',
+        });
+        return;
+      }
+
+      const { code, playerId, sessionToken: st } = rooms.createRoom(
+        socket.id,
+        creatorName
+      );
       socket.data.hostRoomCode = code;
-      socket.emit('room_created', { code, role: 'host' });
-      socket.emit('lobby_update', rooms.serializeLobby(rooms.getRoom(code)));
+      socket.emit('room_created', {
+        code,
+        role: 'player',
+        playerId,
+        sessionToken: st,
+        isCreator: true,
+      });
+      socket.emit('room_update', rooms.serializeRoom(rooms.getRoom(code)));
     } catch (e) {
-      socket.emit('error_msg', { message: String(e?.message ?? e) });
+      const msg = String(e?.message ?? e);
+      if (msg === 'CREATOR_NAME_REQUIRED') {
+        socket.emit('error_msg', {
+          code: 'CREATOR_NAME_REQUIRED',
+          message: 'Введите имя создателя',
+        });
+      } else {
+        socket.emit('error_msg', { message: msg });
+      }
     }
   });
 
-  socket.on('host_rejoin', ({ code } = {}) => {
-    const c = String(code ?? '');
-    const result = rooms.attachHostSocket(c, socket.id);
+  socket.on('host_rejoin', ({ code, sessionToken } = {}) => {
+    const c = String(code ?? '').replace(/\D/g, '').slice(0, 4);
+    const result = rooms.attachHostSocket(c, socket.id, sessionToken ?? null);
     if (!result.ok) {
       socket.emit('error_msg', { code: result.error });
       return;
     }
-    socket.emit('room_joined', { code: c, role: 'host' });
-    socket.emit('lobby_update', rooms.serializeLobby(result.room));
+    const room = result.room;
+    socket.data.hostRoomCode = c;
+    const creator = room.creatorPlayerId
+      ? room.players.get(room.creatorPlayerId)
+      : null;
+    socket.emit('room_joined', {
+      code: c,
+      role: 'player',
+      playerId: creator?.id,
+      sessionToken: creator?.sessionToken,
+      isCreator: true,
+    });
+    socket.emit('room_update', rooms.serializeRoom(room));
   });
 
   socket.on('join_room', (payload = {}) => {
@@ -61,20 +111,23 @@ io.on('connection', (socket) => {
       name: payload.name,
       sessionToken: payload.sessionToken ?? null,
       socketId: socket.id,
+      role: payload.role === 'spectator' ? 'spectator' : 'player',
     });
     if (!result.ok) {
       socket.emit('join_room_failed', { code: result.error });
       return;
     }
+    const isSpectator = payload.role === 'spectator';
     socket.emit('room_joined', {
       code: result.room.code,
-      role: 'player',
+      role: isSpectator ? 'spectator' : 'player',
       playerId: result.playerId,
       sessionToken: result.sessionToken,
+      isCreator: false,
     });
     io.to(`room:${result.room.code}`).emit(
-      'lobby_update',
-      rooms.serializeLobby(result.room)
+      'room_update',
+      rooms.serializeRoom(result.room)
     );
   });
 
@@ -95,10 +148,9 @@ io.on('connection', (socket) => {
       socket.emit('start_game_failed', { code: r.error });
       return;
     }
-    const lobbyPayload = rooms.serializeLobby(r.room);
-    io.to(`room:${r.room.code}`).emit('lobby_update', lobbyPayload);
-    // Дублируем инициатору: на случай если сокет не в socket.io room (редкий edge-case).
-    socket.emit('lobby_update', lobbyPayload);
+    const roomPayload = rooms.serializeRoom(r.room);
+    io.to(`room:${r.room.code}`).emit('room_update', roomPayload);
+    socket.emit('room_update', roomPayload);
   });
 
   socket.on('host_game_action', (payload = {}) => {
@@ -113,6 +165,20 @@ io.on('connection', (socket) => {
     const code = String(payload.code ?? '');
     const playerId = String(payload.playerId ?? '');
     const r = rooms.playerAction(code, playerId, socket.id, payload.action ?? {});
+    if (!r.ok) {
+      socket.emit('player_action_failed', { code: r.error });
+    }
+  });
+
+  socket.on('SUBMIT_MATCH', (payload = {}) => {
+    const code = String(payload.code ?? '');
+    const playerId = String(payload.playerId ?? '');
+    const r = rooms.playerAction(code, playerId, socket.id, {
+      type: 'submit_match',
+      roundId: payload.roundId,
+      matched: payload.matched,
+      wordId: payload.wordId ?? null,
+    });
     if (!r.ok) {
       socket.emit('player_action_failed', { code: r.error });
     }

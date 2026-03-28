@@ -1,6 +1,7 @@
 import { createGame } from './games/index.js';
 
 /** @typedef {'LOBBY' | 'PLAYING' | 'RESULTS'} RoomStatus */
+/** @typedef {'player' | 'spectator'} ParticipantRole */
 
 /**
  * @typedef {Object} PlayerRecord
@@ -8,6 +9,9 @@ import { createGame } from './games/index.js';
  * @property {string} name
  * @property {string} socketId
  * @property {string} sessionToken
+ * @property {ParticipantRole} role
+ * @property {boolean} isCreator
+ * @property {number} score
  */
 
 /**
@@ -15,6 +19,7 @@ import { createGame } from './games/index.js';
  * @property {string} code
  * @property {RoomStatus} status
  * @property {string | null} hostSocketId
+ * @property {string | null} creatorPlayerId
  * @property {Map<string, PlayerRecord>} players
  * @property {string | null} gameType
  * @property {import('./games/BaseGame.js').BaseGame | null} game
@@ -25,6 +30,24 @@ function randomDigits4() {
   return String(Math.floor(1000 + Math.random() * 9000));
 }
 
+/** @param {Room} room */
+function countRolePlayers(room) {
+  let n = 0;
+  for (const p of room.players.values()) {
+    if (p.role === 'player') n += 1;
+  }
+  return n;
+}
+
+/** @param {Room} room @returns {Map<string, PlayerRecord>} */
+function playersOnlyMap(room) {
+  const m = new Map();
+  for (const [id, p] of room.players) {
+    if (p.role === 'player') m.set(id, p);
+  }
+  return m;
+}
+
 export class RoomManager {
   /** @param {import('socket.io').Server} io */
   constructor(io) {
@@ -33,8 +56,17 @@ export class RoomManager {
     this.rooms = new Map();
   }
 
-  /** @param {string} socketId */
-  createRoom(socketId) {
+  /**
+   * @param {string} socketId
+   * @param {string} creatorName
+   * @returns {{ code: string, playerId: string, sessionToken: string }}
+   */
+  createRoom(socketId, creatorName) {
+    const name = String(creatorName ?? '').trim().slice(0, 32);
+    if (!name) {
+      throw new Error('CREATOR_NAME_REQUIRED');
+    }
+
     let code = randomDigits4();
     let guard = 0;
     while (this.rooms.has(code) && guard++ < 50) {
@@ -44,19 +76,34 @@ export class RoomManager {
       throw new Error('Could not allocate room code');
     }
 
+    const id = crypto.randomUUID();
+    const sessionToken = crypto.randomUUID();
+
+    /** @type {PlayerRecord} */
+    const creator = {
+      id,
+      name,
+      socketId,
+      sessionToken,
+      role: 'player',
+      isCreator: true,
+      score: 0,
+    };
+
     /** @type {Room} */
     const room = {
       code,
       status: 'LOBBY',
       hostSocketId: socketId,
-      players: new Map(),
+      creatorPlayerId: id,
+      players: new Map([[id, creator]]),
       gameType: null,
       game: null,
       orphanTimer: null,
     };
     this.rooms.set(code, room);
     this._joinSocketRoom(socketId, code);
-    return { code };
+    return { code, playerId: id, sessionToken };
   }
 
   /** @param {string} code */
@@ -68,7 +115,7 @@ export class RoomManager {
 
   /**
    * @param {string} code
-   * @param {{ name: string, sessionToken?: string | null, socketId: string }} payload
+   * @param {{ name: string, sessionToken?: string | null, socketId: string, role?: string }} payload
    * @returns {{ ok: true, playerId: string, sessionToken: string, room: Room } | { ok: false, error: string }}
    */
   joinRoom(code, payload) {
@@ -77,6 +124,26 @@ export class RoomManager {
     const room = this.rooms.get(c);
     if (!room) return { ok: false, error: 'ROOM_NOT_FOUND' };
 
+    if (payload.role === 'spectator') {
+      const st = payload.sessionToken ? String(payload.sessionToken) : null;
+      if (st) {
+        for (const p of room.players.values()) {
+          if (p.sessionToken === st && p.role === 'spectator') {
+            for (const [pid, pl] of [...room.players]) {
+              if (pl.socketId === payload.socketId && pid !== p.id) {
+                room.players.delete(pid);
+              }
+            }
+            p.socketId = payload.socketId;
+            this._clearOrphanTimer(room);
+            this._joinSocketRoom(payload.socketId, room.code);
+            return { ok: true, playerId: p.id, sessionToken: p.sessionToken, room };
+          }
+        }
+      }
+      return this._joinSpectator(room, payload.socketId);
+    }
+
     const name = String(payload.name ?? '').trim().slice(0, 32);
     if (!name) return { ok: false, error: 'NAME_REQUIRED' };
 
@@ -84,7 +151,7 @@ export class RoomManager {
 
     if (token) {
       for (const p of room.players.values()) {
-        if (p.sessionToken === token) {
+        if (p.sessionToken === token && p.role === 'player') {
           p.socketId = payload.socketId;
           this._clearOrphanTimer(room);
           this._joinSocketRoom(payload.socketId, room.code);
@@ -93,8 +160,6 @@ export class RoomManager {
       }
     }
 
-    // Один WebSocket = один игрок в комнате: иначе с той же вкладки
-    // накапливались записи с одним socketId или «залипал» старый токен.
     for (const [pid, p] of [...room.players]) {
       if (p.socketId === payload.socketId) {
         room.players.delete(pid);
@@ -109,6 +174,9 @@ export class RoomManager {
       name,
       socketId: payload.socketId,
       sessionToken,
+      role: 'player',
+      isCreator: false,
+      score: 0,
     };
     room.players.set(id, player);
     this._clearOrphanTimer(room);
@@ -117,16 +185,62 @@ export class RoomManager {
   }
 
   /**
-   * Хост переподключается к той же комнате (тот же код + опционально токен в будущем).
-   * @param {string} code
+   * @param {Room} room
    * @param {string} socketId
    */
-  attachHostSocket(code, socketId) {
+  _joinSpectator(room, socketId) {
+    for (const [pid, p] of [...room.players]) {
+      if (p.socketId === socketId) {
+        room.players.delete(pid);
+      }
+    }
+
+    const id = crypto.randomUUID();
+    const sessionToken = crypto.randomUUID();
+    /** @type {PlayerRecord} */
+    const spectator = {
+      id,
+      name: '',
+      socketId,
+      sessionToken,
+      role: 'spectator',
+      isCreator: false,
+      score: 0,
+    };
+    room.players.set(id, spectator);
+    this._clearOrphanTimer(room);
+    this._joinSocketRoom(socketId, room.code);
+    return { ok: true, playerId: id, sessionToken, room };
+  }
+
+  /**
+   * @param {string} code
+   * @param {string} socketId
+   * @param {string | null} [sessionToken]
+   */
+  attachHostSocket(code, socketId, sessionToken = null) {
     const c = this._normalizeCode(code);
     if (!c) return { ok: false, error: 'ROOM_NOT_FOUND' };
     const room = this.rooms.get(c);
     if (!room) return { ok: false, error: 'ROOM_NOT_FOUND' };
+
     room.hostSocketId = socketId;
+    const cid = room.creatorPlayerId;
+    if (cid) {
+      const creator = room.players.get(cid);
+      if (creator?.isCreator && creator.role === 'player') {
+        if (sessionToken && creator.sessionToken !== sessionToken) {
+          return { ok: false, error: 'INVALID_CREATOR_SESSION' };
+        }
+        for (const [pid, p] of [...room.players]) {
+          if (p.socketId === socketId && pid !== cid) {
+            room.players.delete(pid);
+          }
+        }
+        creator.socketId = socketId;
+      }
+    }
+
     this._clearOrphanTimer(room);
     this._joinSocketRoom(socketId, room.code);
     return { ok: true, room };
@@ -152,8 +266,6 @@ export class RoomManager {
       this.io.sockets.sockets.get(socketId)?.leave(this._roomChannel(room.code));
       if (room.players.size === 0 && !room.hostSocketId) {
         if (room.status === 'LOBBY') {
-          // «Пустая» лобби-комната без сокета хоста — не удаляем сразу: игрок успевает зайти
-          // (раньше комната исчезала при любом disconnect хоста → ROOM_NOT_FOUND).
           this._scheduleLobbyOrphanCleanup(room);
         } else {
           this._clearOrphanTimer(room);
@@ -162,7 +274,7 @@ export class RoomManager {
       }
       this.io
         .to(this._roomChannel(room.code))
-        .emit('lobby_update', this.serializeLobby(room));
+        .emit('room_update', this.serializeRoom(room));
       return;
     }
   }
@@ -181,7 +293,7 @@ export class RoomManager {
     if (room.hostSocketId !== hostSocketId) {
       return { ok: false, error: 'NOT_HOST' };
     }
-    if (room.players.size < 1) {
+    if (countRolePlayers(room) < 1) {
       return { ok: false, error: 'NEED_PLAYERS' };
     }
 
@@ -190,7 +302,8 @@ export class RoomManager {
 
     const ctx = {
       code: room.code,
-      getPlayers: () => room.players,
+      getPlayers: () => playersOnlyMap(room),
+      getParticipants: () => room.players,
       getHostSocketId: () => room.hostSocketId ?? '',
       getRoomStatus: () => room.status,
       setRoomStatus: (/** @type {RoomStatus} */ s) => {
@@ -201,14 +314,50 @@ export class RoomManager {
       },
       emitToSocket: (targetSocketId, event, payload) => {
         if (!targetSocketId) return;
-        // Прямой emit надёжнее, чем io.to(id) в некоторых конфигурациях прокси/клиента.
         this.io.sockets.sockets.get(targetSocketId)?.emit(event, payload);
+      },
+      syncPlayerScores: (/** @type {Map<string, number> | Record<string, number>} */ s) => {
+        const entries = s instanceof Map ? [...s.entries()] : Object.entries(s);
+        for (const [pid, val] of entries) {
+          const pl = room.players.get(pid);
+          if (pl && pl.role === 'player') {
+            pl.score = Math.floor(Number(val)) || 0;
+          }
+        }
       },
     };
 
     room.game = createGame(gameType, ctx);
     room.game.onStart(options);
 
+    return { ok: true, room };
+  }
+
+  /**
+   * @param {Room} room
+   * @returns {{ ok: true, room: Room }}
+   */
+  _returnRoomToLobby(room) {
+    if (room.game && typeof room.game.onEnd === 'function') {
+      try {
+        room.game.onEnd();
+      } catch {
+        /* ignore */
+      }
+    }
+    room.game = null;
+    room.status = 'LOBBY';
+    room.gameType = null;
+    for (const p of room.players.values()) {
+      if (p.role === 'player') p.score = 0;
+    }
+    const snap = this.serializeRoom(room);
+    this.io.to(this._roomChannel(room.code)).emit('room_update', snap);
+    this.io.to(this._roomChannel(room.code)).emit('game_update', {
+      roomCode: room.code,
+      roomStatus: room.status,
+      state: null,
+    });
     return { ok: true, room };
   }
 
@@ -221,10 +370,19 @@ export class RoomManager {
     const c = this._normalizeCode(code);
     if (!c) return { ok: false, error: 'ROOM_NOT_FOUND' };
     const room = this.rooms.get(c);
-    if (!room?.game) return { ok: false, error: 'NO_GAME' };
+    if (!room) return { ok: false, error: 'ROOM_NOT_FOUND' };
     if (room.hostSocketId !== hostSocketId) {
       return { ok: false, error: 'NOT_HOST' };
     }
+
+    if (payload?.type === 'return_to_lobby') {
+      if (room.status === 'LOBBY' && !room.game) {
+        return { ok: false, error: 'ALREADY_IN_LOBBY' };
+      }
+      return this._returnRoomToLobby(room);
+    }
+
+    if (!room.game) return { ok: false, error: 'NO_GAME' };
     if (typeof room.game.onHostAction === 'function') {
       room.game.onHostAction(payload);
     }
@@ -241,9 +399,24 @@ export class RoomManager {
     const c = this._normalizeCode(code);
     if (!c) return { ok: false, error: 'NO_GAME' };
     const room = this.rooms.get(c);
-    if (!room?.game) return { ok: false, error: 'NO_GAME' };
-    const p = room.players.get(playerId);
-    if (!p || p.socketId !== socketId) return { ok: false, error: 'NOT_YOUR_PLAYER' };
+    if (!room) return { ok: false, error: 'NO_GAME' };
+
+    if (payload?.type === 'return_to_lobby') {
+      const creatorPl = room.players.get(playerId);
+      if (!creatorPl || creatorPl.socketId !== socketId) {
+        return { ok: false, error: 'NOT_YOUR_PLAYER' };
+      }
+      if (!creatorPl.isCreator) return { ok: false, error: 'NOT_CREATOR' };
+      if (room.status === 'LOBBY' && !room.game) {
+        return { ok: false, error: 'ALREADY_IN_LOBBY' };
+      }
+      return this._returnRoomToLobby(room);
+    }
+
+    if (!room.game) return { ok: false, error: 'NO_GAME' };
+    const pl = room.players.get(playerId);
+    if (!pl || pl.socketId !== socketId) return { ok: false, error: 'NOT_YOUR_PLAYER' };
+    if (pl.role !== 'player') return { ok: false, error: 'SPECTATOR_CANNOT_PLAY' };
 
     room.game.onAction(playerId, payload);
     return { ok: true };
@@ -307,15 +480,19 @@ export class RoomManager {
     sock?.join(this._roomChannel(code));
   }
 
-  /** Публичный снимок комнаты для клиентов */
-  serializeLobby(room) {
+  /** Снимок комнаты для клиентов (ROOM_UPDATE) */
+  serializeRoom(room) {
     return {
       code: room.code,
       status: room.status,
       gameType: room.gameType,
-      players: [...room.players.values()].map((p) => ({
+      creatorPlayerId: room.creatorPlayerId ?? null,
+      participants: [...room.players.values()].map((p) => ({
         id: p.id,
         name: p.name,
+        role: p.role,
+        isCreator: p.isCreator,
+        score: p.score ?? 0,
       })),
     };
   }
