@@ -27,6 +27,8 @@ export default function CommonGuessPlayer({
   const [now, setNow] = useState(Date.now());
   const fieldsRef = useRef(fields);
   const lastCollectingKeyRef = useRef(null);
+  /** Чтобы не сбрасывать выбор при первом входе в фазу matching с тем же roundId */
+  const lastRoundIdForResetRef = useRef(null);
 
   /** Локальный список оставшихся слов (синхронизируется с сервером) */
   const [myWords, setMyWords] = useState([]);
@@ -84,11 +86,23 @@ export default function CommonGuessPlayer({
     state?.remainingWords,
   ]);
 
-  // Новый раунд — сброс выбора
+  // Новый раунд сверки (сменился roundId) — сброс выбора, не трогаем при первом монтировании
   useEffect(() => {
-    if (!matching) return;
-    setSelectedWordId(null);
-    setDeclaredNoWord(false);
+    if (!matching) {
+      lastRoundIdForResetRef.current = null;
+      return;
+    }
+    const rid = state?.roundId;
+    if (rid == null) return;
+    if (lastRoundIdForResetRef.current === null) {
+      lastRoundIdForResetRef.current = rid;
+      return;
+    }
+    if (lastRoundIdForResetRef.current !== rid) {
+      lastRoundIdForResetRef.current = rid;
+      setSelectedWordId(null);
+      setDeclaredNoWord(false);
+    }
   }, [matching, state?.roundId]);
 
   const sendWords = useCallback(
@@ -148,6 +162,9 @@ export default function CommonGuessPlayer({
 
     const matched = selectedWordId != null;
     const wordId = matched ? selectedWordId : null;
+    const selected = matched
+      ? myWords.find((w) => w.id === selectedWordId)
+      : null;
 
     socket.emit('SUBMIT_MATCH', {
       code: roomCode,
@@ -155,6 +172,7 @@ export default function CommonGuessPlayer({
       roundId: rid,
       matched,
       wordId,
+      wordText: selected?.word ?? null,
     });
   }, [
     playerId,
@@ -164,7 +182,7 @@ export default function CommonGuessPlayer({
     state?.roundId,
     selectedWordId,
     declaredNoWord,
-    myWords.length,
+    myWords,
     socket,
   ]);
 

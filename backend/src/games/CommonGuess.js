@@ -70,7 +70,7 @@ export class CommonGuess extends BaseGame {
     this.playerWordSlots = new Map();
     /** @type {Map<string, Set<string>>} */
     this.remainingWordIds = new Map();
-    /** @type {Map<string, { matched: boolean, wordId: string | null }>} */
+    /** @type {Map<string, { matched: boolean, wordId: string | null, wordText: string | null }>} */
     this.roundSubmissions = new Map();
     /** @type {Record<string, unknown> | null} */
     this.lastRoundResults = null;
@@ -187,8 +187,11 @@ export class CommonGuess extends BaseGame {
       typeof payload.wordId === 'string' && payload.wordId.length > 0
         ? payload.wordId
         : null;
+    const wordTextRaw =
+      typeof payload.wordText === 'string' ? payload.wordText.trim() : '';
+    const wordText = wordTextRaw.length > 0 ? wordTextRaw : null;
 
-    this.roundSubmissions.set(playerId, { matched, wordId });
+    this.roundSubmissions.set(playerId, { matched, wordId, wordText });
 
     this.ctx.emitToSocket(
       this._socketIdForPlayer(playerId),
@@ -443,7 +446,11 @@ export class CommonGuess extends BaseGame {
     const players = this.ctx.getPlayers();
     for (const pid of players.keys()) {
       if (!this.roundSubmissions.has(pid)) {
-        this.roundSubmissions.set(pid, { matched: false, wordId: null });
+        this.roundSubmissions.set(pid, {
+          matched: false,
+          wordId: null,
+          wordText: null,
+        });
       }
     }
     this._tryResolveRound();
@@ -457,6 +464,30 @@ export class CommonGuess extends BaseGame {
     this._resolveRound();
   }
 
+  /**
+   * Находит карточку по id или по тексту (если id рассинхронизировался с клиентом).
+   * @param {{ matched: boolean, wordId: string | null, wordText: string | null }} sub
+   * @param {{ id: string, text: string }[]} slots
+   * @param {Set<string> | undefined} rem
+   * @returns {{ id: string, text: string } | null}
+   */
+  _resolveMatchSlot(sub, slots, rem) {
+    if (!sub.matched || !rem || rem.size === 0) return null;
+    if (sub.wordId && rem.has(sub.wordId)) {
+      const slot = slots.find((s) => s.id === sub.wordId);
+      if (slot) return slot;
+    }
+    if (sub.wordText) {
+      const n = CommonGuess.normalizeWord(sub.wordText);
+      if (!n) return null;
+      const slot = slots.find(
+        (s) => rem.has(s.id) && CommonGuess.normalizeWord(s.text) === n
+      );
+      if (slot) return slot;
+    }
+    return null;
+  }
+
   _resolveRound() {
     const currentWord = this.currentWord;
     if (currentWord == null) return;
@@ -464,39 +495,37 @@ export class CommonGuess extends BaseGame {
     const savedPoolIdx = this._currentWordPoolIndex;
     this._currentWordPoolIndex = -1;
 
-    /** @type {string[]} */
-    const validMatchers = [];
+    /** @type {{ pid: string, slot: { id: string, text: string } }[]} */
+    const validMatchEntries = [];
 
     for (const [pid, sub] of this.roundSubmissions) {
       const rem = this.remainingWordIds.get(pid);
       const slots = this.playerWordSlots.get(pid) ?? [];
-      let valid = false;
-      if (sub.matched && sub.wordId && rem?.has(sub.wordId)) {
-        const slot = slots.find((s) => s.id === sub.wordId);
-        if (slot && slot.text === currentWord) valid = true;
-      }
-      if (valid) validMatchers.push(pid);
+      const slot = this._resolveMatchSlot(sub, slots, rem);
+      if (slot) validMatchEntries.push({ pid, slot });
     }
 
-    /** Каждый верно указавший слово «снимает» свою карточку и одно вхождение в общем пуле */
-    if (validMatchers.length > 0) {
-      for (let n = 0; n < validMatchers.length; n++) {
-        const i = this.gamePool.indexOf(currentWord);
-        if (i >= 0) this.gamePool.splice(i, 1);
-      }
-      for (const pid of validMatchers) {
-        const sub = this.roundSubmissions.get(pid);
-        if (sub?.wordId) {
-          this.remainingWordIds.get(pid)?.delete(sub.wordId);
-        }
-      }
+    const validMatchers = validMatchEntries.map((e) => e.pid);
+
+    /**
+     * Слово раунда всегда «съедает» одну позицию в пуле (то, что выпало на экран).
+     * Затем у каждого отметившего совпадение снимаем ещё одно вхождение его текста —
+     * если оно совпало с вынутым словом, первая операция уже убрала эту копию,
+     * indexOf не найдёт вторую лишний раз. При разных написаниях убираем и вынутое,
+     * и вариант на карточке каждого игрока.
+     */
+    if (savedPoolIdx >= 0 && savedPoolIdx < this.gamePool.length) {
+      this.gamePool.splice(savedPoolIdx, 1);
     } else {
-      const idx = savedPoolIdx;
-      if (idx >= 0 && idx < this.gamePool.length && this.gamePool[idx] === currentWord) {
-        this.gamePool.splice(idx, 1);
-      } else {
-        const i = this.gamePool.indexOf(currentWord);
+      const i = this.gamePool.indexOf(currentWord);
+      if (i >= 0) this.gamePool.splice(i, 1);
+    }
+
+    if (validMatchEntries.length > 0) {
+      for (const { pid, slot } of validMatchEntries) {
+        const i = this.gamePool.indexOf(slot.text);
         if (i >= 0) this.gamePool.splice(i, 1);
+        this.remainingWordIds.get(pid)?.delete(slot.id);
       }
     }
 

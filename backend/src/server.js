@@ -193,6 +193,8 @@ io.on('connection', (socket) => {
       roundId: payload.roundId,
       matched: payload.matched,
       wordId: payload.wordId ?? null,
+      wordText:
+        typeof payload.wordText === 'string' ? payload.wordText : null,
     });
     if (!r.ok) {
       socket.emit('player_action_failed', { code: r.error });
