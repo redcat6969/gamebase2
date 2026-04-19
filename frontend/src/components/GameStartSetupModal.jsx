@@ -53,7 +53,7 @@ export default function GameStartSetupModal({
               id="game-start-setup-title"
               className="text-xl font-bold text-white text-center mb-1"
             >
-              Common Guess
+              Угадай общее
             </h2>
             <p className="text-sm text-slate-500 text-center mb-6">
               Перед запуском выберите параметры партии

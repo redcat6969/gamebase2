@@ -1,8 +1,29 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import TVView from '../games/commonGuess/TVView.jsx';
+import CodenamesHostView from '../games/codenames/HostView.jsx';
+import CodenamesPlayerView from '../games/codenames/PlayerView.jsx';
 import CommonGuessPlayer from '../games/commonGuess/CommonGuessPlayer.jsx';
 
+function CodenamesShell({ state, roomCode, socket, playerId }) {
+  const s = state;
+  if (!s || s.gameType !== 'codenames') {
+    return (
+      <p className="text-slate-400 text-center py-12">Загрузка состояния игры…</p>
+    );
+  }
+  /** Все игроки (включая ведущего) получают состояние игрока; общий экран только у зрителей */
+  return (
+    <CodenamesPlayerView
+      state={s}
+      roomCode={roomCode}
+      socket={socket}
+      playerId={playerId}
+    />
+  );
+}
+
 const PLAYER_VIEWS = {
+  codenames: CodenamesShell,
   common_guess: CommonGuessPlayer,
 };
 
@@ -26,6 +47,12 @@ export default function GameContainer({
   playerId,
   isCreator = false,
 }) {
+  const stateMatchesGame =
+    !gameType ||
+    !gameState ||
+    typeof gameState.gameType !== 'string' ||
+    gameState.gameType === gameType;
+
   if (role === 'spectator') {
     return (
       <AnimatePresence mode="wait">
@@ -38,10 +65,17 @@ export default function GameContainer({
           className="min-h-[50vh]"
         >
           {gameType ? (
-            gameState == null ? (
+            gameState == null || !stateMatchesGame ? (
               <p className="text-slate-400 text-center py-12">
                 Загрузка состояния игры…
               </p>
+            ) : gameType === 'codenames' ? (
+              <CodenamesHostView
+                state={gameState}
+                roomCode={roomCode}
+                socket={socket}
+                readOnly
+              />
             ) : (
               <TVView state={gameState} roomCode={roomCode} socket={socket} />
             )
@@ -68,7 +102,7 @@ export default function GameContainer({
         className="min-h-[50vh]"
       >
         {Cmp ? (
-          gameState == null ? (
+          gameState == null || !stateMatchesGame ? (
             <p className="text-slate-400 text-center py-12">
               Загрузка состояния игры…
             </p>

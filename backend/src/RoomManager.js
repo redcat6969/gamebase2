@@ -1,4 +1,5 @@
-import { createGame } from './games/index.js';
+import { createGame, normalizeGameType } from './games/index.js';
+import { normalizeAvatarId } from './avatarIds.js';
 
 /** @typedef {'LOBBY' | 'PLAYING' | 'RESULTS'} RoomStatus */
 /** @typedef {'player' | 'spectator'} ParticipantRole */
@@ -7,6 +8,7 @@ import { createGame } from './games/index.js';
  * @typedef {Object} PlayerRecord
  * @property {string} id
  * @property {string} name
+ * @property {string} avatar
  * @property {string} socketId
  * @property {string} sessionToken
  * @property {ParticipantRole} role
@@ -24,6 +26,7 @@ import { createGame } from './games/index.js';
  * @property {string | null} gameType
  * @property {import('./games/BaseGame.js').BaseGame | null} game
  * @property {ReturnType<typeof setTimeout> | null} [orphanTimer]
+ * @property {number} [_wireRev] счётчик для клиента (устаревшие снимки при переупорядочивании сети)
  */
 
 function randomDigits4() {
@@ -58,14 +61,15 @@ export class RoomManager {
 
   /**
    * @param {string} socketId
-   * @param {string} creatorName
+   * @param {{ name: string, avatar?: string | null }} opts
    * @returns {{ code: string, playerId: string, sessionToken: string }}
    */
-  createRoom(socketId, creatorName) {
-    const name = String(creatorName ?? '').trim().slice(0, 32);
+  createRoom(socketId, opts) {
+    const name = String(opts?.name ?? '').trim().slice(0, 32);
     if (!name) {
       throw new Error('CREATOR_NAME_REQUIRED');
     }
+    const avatar = normalizeAvatarId(opts?.avatar);
 
     let code = randomDigits4();
     let guard = 0;
@@ -83,6 +87,7 @@ export class RoomManager {
     const creator = {
       id,
       name,
+      avatar,
       socketId,
       sessionToken,
       role: 'player',
@@ -115,7 +120,7 @@ export class RoomManager {
 
   /**
    * @param {string} code
-   * @param {{ name: string, sessionToken?: string | null, socketId: string, role?: string }} payload
+   * @param {{ name: string, sessionToken?: string | null, socketId: string, role?: string, avatar?: string | null }} payload
    * @returns {{ ok: true, playerId: string, sessionToken: string, room: Room } | { ok: false, error: string }}
    */
   joinRoom(code, payload) {
@@ -172,6 +177,7 @@ export class RoomManager {
     const player = {
       id,
       name,
+      avatar: normalizeAvatarId(payload.avatar),
       socketId: payload.socketId,
       sessionToken,
       role: 'player',
@@ -201,6 +207,7 @@ export class RoomManager {
     const spectator = {
       id,
       name: '',
+      avatar: normalizeAvatarId(null),
       socketId,
       sessionToken,
       role: 'spectator',
@@ -279,7 +286,7 @@ export class RoomManager {
       }
       this.io
         .to(this._roomChannel(room.code))
-        .emit('room_update', this.serializeRoom(room));
+        .emit('room_update', this.snapshotForClients(room));
       return;
     }
   }
@@ -302,8 +309,21 @@ export class RoomManager {
       return { ok: false, error: 'NEED_PLAYERS' };
     }
 
-    room.gameType = gameType;
+    if (room.game && typeof room.game.onEnd === 'function') {
+      try {
+        room.game.onEnd();
+      } catch {
+        /* ignore */
+      }
+    }
+
+    const normalizedType = normalizeGameType(gameType);
+    room.gameType = normalizedType;
     room.status = 'PLAYING';
+
+    this.io
+      .to(this._roomChannel(room.code))
+      .emit('room_update', this.snapshotForClients(room));
 
     const ctx = {
       code: room.code,
@@ -311,6 +331,7 @@ export class RoomManager {
       getParticipants: () => room.players,
       getHostSocketId: () => room.hostSocketId ?? '',
       getRoomStatus: () => room.status,
+      getCreatorPlayerId: () => room.creatorPlayerId ?? null,
       setRoomStatus: (/** @type {RoomStatus} */ s) => {
         room.status = s;
       },
@@ -332,8 +353,17 @@ export class RoomManager {
       },
     };
 
-    room.game = createGame(gameType, ctx);
+    room.game = createGame(normalizedType, ctx);
     room.game.onStart(options);
+
+    const socketIds = new Set();
+    if (room.hostSocketId) socketIds.add(room.hostSocketId);
+    for (const p of room.players.values()) {
+      if (p.socketId) socketIds.add(p.socketId);
+    }
+    for (const sid of socketIds) {
+      this.pushGameStateToSocket(room, sid);
+    }
 
     return { ok: true, room };
   }
@@ -356,13 +386,27 @@ export class RoomManager {
     for (const p of room.players.values()) {
       if (p.role === 'player') p.score = 0;
     }
-    const snap = this.serializeRoom(room);
-    this.io.to(this._roomChannel(room.code)).emit('room_update', snap);
-    this.io.to(this._roomChannel(room.code)).emit('game_update', {
+    const snap = this.snapshotForClients(room);
+    const lobbyGamePayload = {
       roomCode: room.code,
       roomStatus: room.status,
       state: null,
-    });
+    };
+
+    /** Игровые апдейты идут через emitToSocket(socketId); io.to(room) может не доставить тем, кто выпал из socket.io room при reconnect и всё же получает ходы напрямую */
+    const socketIds = new Set();
+    if (room.hostSocketId) socketIds.add(room.hostSocketId);
+    for (const p of room.players.values()) {
+      if (p.socketId) socketIds.add(p.socketId);
+    }
+    for (const sid of socketIds) {
+      const sock = this.io.sockets.sockets.get(sid);
+      if (!sock) continue;
+      sock.emit('room_update', snap);
+      sock.emit('game_update', lobbyGamePayload);
+    }
+    this.io.to(this._roomChannel(room.code)).emit('room_update', snap);
+    this.io.to(this._roomChannel(room.code)).emit('game_update', lobbyGamePayload);
     return { ok: true, room };
   }
 
@@ -371,12 +415,25 @@ export class RoomManager {
    * @param {string} hostSocketId
    * @param {Record<string, unknown>} payload
    */
+  /**
+   * Сокет «ведущего»: экран комнаты (hostSocketId) или телефон создателя комнаты.
+   * @param {*} room
+   * @param {string} socketId
+   */
+  _isHostControlSocket(room, socketId) {
+    if (room.hostSocketId === socketId) return true;
+    const cid = room.creatorPlayerId;
+    if (!cid) return false;
+    const creator = room.players.get(cid);
+    return creator?.socketId === socketId;
+  }
+
   hostGameAction(code, hostSocketId, payload) {
     const c = this._normalizeCode(code);
     if (!c) return { ok: false, error: 'ROOM_NOT_FOUND' };
     const room = this.rooms.get(c);
     if (!room) return { ok: false, error: 'ROOM_NOT_FOUND' };
-    if (room.hostSocketId !== hostSocketId) {
+    if (!this._isHostControlSocket(room, hostSocketId)) {
       return { ok: false, error: 'NOT_HOST' };
     }
 
@@ -420,8 +477,19 @@ export class RoomManager {
 
     if (!room.game) return { ok: false, error: 'NO_GAME' };
     const pl = room.players.get(playerId);
-    if (!pl || pl.socketId !== socketId) return { ok: false, error: 'NOT_YOUR_PLAYER' };
+    if (!pl) return { ok: false, error: 'NOT_YOUR_PLAYER' };
     if (pl.role !== 'player') return { ok: false, error: 'SPECTATOR_CANNOT_PLAY' };
+
+    if (pl.socketId !== socketId) {
+      const oldSock = this.io.sockets.sockets.get(pl.socketId);
+      const oldAlive = oldSock?.connected === true;
+      if (!oldAlive) {
+        pl.socketId = socketId;
+        this._joinSocketRoom(socketId, room.code);
+      } else {
+        return { ok: false, error: 'NOT_YOUR_PLAYER' };
+      }
+    }
 
     room.game.onAction(playerId, payload);
     return { ok: true };
@@ -439,15 +507,23 @@ export class RoomManager {
     const roomStatus = room.status;
     const payloadBase = { roomCode: room.code, roomStatus };
 
+    const game = room.game;
     for (const p of room.players.values()) {
       if (p.socketId !== socketId) continue;
       let state = null;
-      if (p.role === 'spectator' && typeof room.game.getHostState === 'function') {
-        state = room.game.getHostState();
-      } else if (p.role === 'player' && typeof room.game.getPlayerState === 'function') {
-        state = room.game.getPlayerState(p.id);
-      } else if (typeof room.game.getState === 'function') {
-        state = room.game.getState();
+      if (
+        socketId === room.hostSocketId &&
+        typeof game?.getHostState === 'function' &&
+        typeof game.hostSocketGetsHostState === 'function' &&
+        game.hostSocketGetsHostState()
+      ) {
+        state = game.getHostState();
+      } else if (p.role === 'spectator' && typeof game?.getHostState === 'function') {
+        state = game.getHostState();
+      } else if (p.role === 'player' && typeof game?.getPlayerState === 'function') {
+        state = game.getPlayerState(p.id);
+      } else if (typeof game?.getState === 'function') {
+        state = game.getState();
       }
       sock.emit('game_update', { ...payloadBase, state });
       return;
@@ -532,10 +608,20 @@ export class RoomManager {
       participants: [...room.players.values()].map((p) => ({
         id: p.id,
         name: p.name,
+        avatar: normalizeAvatarId(p.avatar),
         role: p.role,
         isCreator: p.isCreator,
         score: p.score ?? 0,
       })),
+    };
+  }
+
+  /** Снимок для рассылки по сокетам: каждый вызов — новый монотонный rev */
+  snapshotForClients(room) {
+    room._wireRev = (room._wireRev ?? 0) + 1;
+    return {
+      ...this.serializeRoom(room),
+      rev: room._wireRev,
     };
   }
 }

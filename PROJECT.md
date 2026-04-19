@@ -45,7 +45,7 @@
 
 - При закрытии вкладки или обрыве сети игрок возвращается в ту же комнату под своим именем: **localStorage + sessionId** (согласование с сервером).
 
-## 4. Game Mechanics — Phase 1: «Popular Choice» (CommonGuess)
+## 4. Game Mechanics — Phase 1: «Угадай общее» (`CommonGuess`)
 
 Аналог «100 к 1» / SSGame:
 

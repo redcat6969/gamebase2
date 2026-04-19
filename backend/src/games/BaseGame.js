@@ -33,6 +33,14 @@ export class BaseGame {
     // no-op
   }
 
+  /**
+   * Если true, сокет хоста (`hostSocketId`) при переподключении получает `getHostState()`, иначе — как обычный игрок.
+   * Нужно для игр с отдельным экраном ведущего (например Codenames); Common Guess оставляет false.
+   */
+  hostSocketGetsHostState() {
+    return false;
+  }
+
   /** Состояние для клиентов (host + players) */
   getState() {
     return {};

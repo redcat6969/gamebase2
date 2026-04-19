@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
+import PlayerAvatar from '../../components/PlayerAvatar.jsx';
 
 const BLANK = () => ['', '', '', '', ''];
 
@@ -266,9 +267,10 @@ export default function CommonGuessPlayer({
                   className="flex-1 max-w-[6rem]"
                 >
                   <div
-                    className={`rounded-t-lg border flex flex-col items-center justify-end p-2 ${box}`}
+                    className={`rounded-t-lg border flex flex-col items-center justify-end p-2 gap-1 ${box}`}
                   >
                     <span className="text-lg">{medal}</span>
+                    <PlayerAvatar avatarId={row.avatar} size="sm" />
                     <span className="text-xs text-slate-200 text-center line-clamp-2 font-medium">
                       {row.name}
                     </span>
@@ -316,8 +318,10 @@ export default function CommonGuessPlayer({
                   key={row.playerId}
                   className="flex justify-between text-slate-200 text-sm"
                 >
-                  <span>
-                    {i + 1}. {row.name}
+                  <span className="flex items-center gap-2 min-w-0">
+                    <span className="text-slate-600 shrink-0">{i + 1}.</span>
+                    <PlayerAvatar avatarId={row.avatar} size="sm" />
+                    <span className="truncate">{row.name}</span>
                   </span>
                   <span className="font-mono text-emerald-400">{row.score}</span>
                 </li>

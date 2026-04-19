@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { normalizeAvatarId } from '../avatarIds.js';
 import { BaseGame } from './BaseGame.js';
 
 /** До скольки слов принимаем с одного игрока */
@@ -359,6 +360,7 @@ export class CommonGuess extends BaseGame {
       .map((p) => ({
         playerId: p.id,
         name: p.name,
+        avatar: normalizeAvatarId(p.avatar),
         score: this.scores.get(p.id) ?? 0,
       }))
       .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
@@ -544,6 +546,7 @@ export class CommonGuess extends BaseGame {
       return {
         playerId: pid,
         name: p?.name ?? '?',
+        avatar: normalizeAvatarId(p?.avatar),
         pointsAdded: pointsPerMatcher,
       };
     });
@@ -610,6 +613,7 @@ export class CommonGuess extends BaseGame {
         return {
           playerId: pid,
           name: p?.name ?? '?',
+          avatar: normalizeAvatarId(p?.avatar),
           answer: c.key,
         };
       }),
@@ -626,6 +630,7 @@ export class CommonGuess extends BaseGame {
       .map((p) => ({
         playerId: p.id,
         name: p.name,
+        avatar: normalizeAvatarId(p.avatar),
         score: this.scores.get(p.id) ?? 0,
       }))
       .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
@@ -681,10 +686,12 @@ export class CommonGuess extends BaseGame {
     });
 
     const players = this.ctx.getPlayers();
+    const mePl = players.get(playerId);
     const leaderboard = [...players.values()]
       .map((p) => ({
         playerId: p.id,
         name: p.name,
+        avatar: normalizeAvatarId(p.avatar),
         score: this.scores.get(p.id) ?? 0,
       }))
       .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
@@ -713,6 +720,7 @@ export class CommonGuess extends BaseGame {
       leaderboard,
       macroRound: this.currentMacroRoundIndex + 1,
       totalMacroRounds: this.totalRounds,
+      myAvatar: normalizeAvatarId(mePl?.avatar),
     };
   }
 

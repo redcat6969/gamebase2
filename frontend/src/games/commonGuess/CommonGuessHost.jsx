@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
+import PlayerAvatar from '../../components/PlayerAvatar.jsx';
 
 function RoundStrip({ state, className = '' }) {
   const mr = state?.macroRound ?? 1;
@@ -51,7 +52,7 @@ export default function CommonGuessHost({ state, roomCode, socket }) {
 
   return (
     <div className="rounded-2xl border border-violet-500/30 bg-violet-950/40 p-6 text-left">
-      <h2 className="text-2xl font-bold text-violet-200 mb-2 text-center">Common Guess</h2>
+      <h2 className="text-2xl font-bold text-violet-200 mb-2 text-center">Угадай общее</h2>
       <RoundStrip state={state} className="mb-2" />
       <p className="text-slate-200 text-center text-lg mb-4 min-h-[3rem]">
         {state.prompt || 'Вопрос'}
@@ -175,9 +176,12 @@ export default function CommonGuessHost({ state, roomCode, socket }) {
               {lr.matchers.map((m) => (
                 <li
                   key={m.playerId}
-                  className="flex justify-between rounded-lg bg-slate-900/60 px-3 py-2 text-slate-200 text-sm"
+                  className="flex justify-between items-center gap-3 rounded-lg bg-slate-900/60 px-3 py-2 text-slate-200 text-sm"
                 >
-                  <span>{m.name}</span>
+                  <span className="flex items-center gap-2 min-w-0">
+                    <PlayerAvatar avatarId={m.avatar} size="sm" />
+                    <span className="truncate">{m.name}</span>
+                  </span>
                   <span className="text-emerald-400 font-mono">
                     {(m.pointsAdded ?? 0) > 0 ? `+${m.pointsAdded}` : '—'}
                   </span>
@@ -229,6 +233,7 @@ export default function CommonGuessHost({ state, roomCode, socket }) {
                     }`}
                   >
                     <span className="text-2xl mb-1">{medal}</span>
+                    <PlayerAvatar avatarId={row.avatar} size="sm" />
                     <span className="text-slate-100 text-sm font-semibold text-center line-clamp-2">
                       {row.name}
                     </span>
@@ -278,9 +283,10 @@ export default function CommonGuessHost({ state, roomCode, socket }) {
                   key={row.playerId}
                   className="flex justify-between rounded-lg bg-slate-900/60 px-3 py-2"
                 >
-                  <span className="text-slate-300">
-                    <span className="text-slate-600 mr-2">{i + 1}.</span>
-                    {row.name}
+                  <span className="flex items-center gap-2 text-slate-300 min-w-0">
+                    <span className="text-slate-600 shrink-0">{i + 1}.</span>
+                    <PlayerAvatar avatarId={row.avatar} size="sm" />
+                    <span className="truncate">{row.name}</span>
                   </span>
                   <span className="text-emerald-400 font-mono font-semibold">{row.score}</span>
                 </li>

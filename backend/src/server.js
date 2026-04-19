@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import express from 'express';
+import { KNOWN_GAME_TYPES } from './games/index.js';
 import { RoomManager } from './RoomManager.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -28,6 +29,8 @@ const io = new Server(httpServer, {
 });
 
 const rooms = new RoomManager(io);
+
+console.log(`Registered games: ${KNOWN_GAME_TYPES.join(', ')}`);
 
 app.get('/health', (_req, res) => {
   res.json({ ok: true });
@@ -54,7 +57,7 @@ io.on('connection', (socket) => {
             sessionToken: creator?.sessionToken,
             isCreator: true,
           });
-          socket.emit('room_update', rooms.serializeRoom(r.room));
+          socket.emit('room_update', rooms.snapshotForClients(r.room));
           rooms.pushGameStateToSocket(r.room, socket.id);
           return;
         }
@@ -72,7 +75,7 @@ io.on('connection', (socket) => {
 
       const { code, playerId, sessionToken: st } = rooms.createRoom(
         socket.id,
-        creatorName
+        { name: creatorName, avatar: payload.avatar }
       );
       socket.data.hostRoomCode = code;
       socket.emit('room_created', {
@@ -82,7 +85,7 @@ io.on('connection', (socket) => {
         sessionToken: st,
         isCreator: true,
       });
-      socket.emit('room_update', rooms.serializeRoom(rooms.getRoom(code)));
+      socket.emit('room_update', rooms.snapshotForClients(rooms.getRoom(code)));
     } catch (e) {
       const msg = String(e?.message ?? e);
       if (msg === 'CREATOR_NAME_REQUIRED') {
@@ -115,7 +118,7 @@ io.on('connection', (socket) => {
       sessionToken: creator?.sessionToken,
       isCreator: true,
     });
-    socket.emit('room_update', rooms.serializeRoom(room));
+    socket.emit('room_update', rooms.snapshotForClients(room));
     rooms.pushGameStateToSocket(room, socket.id);
   });
 
@@ -123,6 +126,7 @@ io.on('connection', (socket) => {
     const code = String(payload.code ?? '');
     const result = rooms.joinRoom(code, {
       name: payload.name,
+      avatar: payload.avatar,
       sessionToken: payload.sessionToken ?? null,
       socketId: socket.id,
       role: payload.role === 'spectator' ? 'spectator' : 'player',
@@ -141,14 +145,18 @@ io.on('connection', (socket) => {
     });
     io.to(`room:${result.room.code}`).emit(
       'room_update',
-      rooms.serializeRoom(result.room)
+      rooms.snapshotForClients(result.room)
     );
     rooms.pushGameStateToSocket(result.room, socket.id);
   });
 
   socket.on('start_game', (payload = {}) => {
     const code = String(payload.code ?? '');
-    const gameType = String(payload.gameType ?? 'common_guess');
+    const rawGt = payload.gameType;
+    const gameType =
+      rawGt == null || rawGt === ''
+        ? 'common_guess'
+        : String(rawGt).trim();
     let r;
     try {
       r = rooms.startGame(code, socket.id, gameType, payload.options ?? {});
@@ -163,7 +171,7 @@ io.on('connection', (socket) => {
       socket.emit('start_game_failed', { code: r.error });
       return;
     }
-    const roomPayload = rooms.serializeRoom(r.room);
+    const roomPayload = rooms.snapshotForClients(r.room);
     io.to(`room:${r.room.code}`).emit('room_update', roomPayload);
     socket.emit('room_update', roomPayload);
   });
@@ -204,6 +212,19 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     rooms.leaveBySocket(socket.id);
   });
+});
+
+httpServer.once('error', (err) => {
+  if (err?.code === 'EADDRINUSE') {
+    console.error(
+      `[gamebase] Порт ${PORT} уже занят (запущен другой процесс Node или старый сервер).\n` +
+        `  Освободите порт: найдите PID командой «lsof -i :${PORT}» или «kill $(lsof -t -i:${PORT})»,\n` +
+        `  либо запустите с другим портом: PORT=3002 npm start`
+    );
+  } else {
+    console.error('[gamebase] Ошибка HTTP-сервера:', err);
+  }
+  process.exit(1);
 });
 
 httpServer.listen(PORT, () => {
