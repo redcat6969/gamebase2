@@ -50,10 +50,12 @@ app.get('/api/game-decks', (_req, res) => {
 
 io.on('connection', (socket) => {
   /** Каталог колод без отдельного HTTP /api (на некоторых хостингах проксируют только /socket.io). */
-  socket.on('get_game_decks', (cb) => {
-    if (typeof cb !== 'function') return;
+  socket.on('get_game_decks', (...args) => {
+    const cb = args.find((a) => typeof a === 'function');
+    if (!cb) return;
     try {
-      cb({ ok: true, catalog: getDeckCatalogMeta() });
+      const catalog = getDeckCatalogMeta();
+      cb({ ok: true, catalog });
     } catch (e) {
       cb({ ok: false, error: String(e?.message ?? e) });
     }

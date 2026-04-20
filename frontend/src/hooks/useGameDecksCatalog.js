@@ -14,6 +14,41 @@ function httpApiBase() {
   return String(raw).replace(/\/$/, '');
 }
 
+/** Ожидаемая форма каталога с бэкенда (getDeckCatalogMeta). */
+function isDeckCatalogShape(obj) {
+  return (
+    obj != null &&
+    typeof obj === 'object' &&
+    !Array.isArray(obj) &&
+    ('common_guess' in obj || 'codenames' in obj || 'never_have_i_ever' in obj)
+  );
+}
+
+/**
+ * Разбор ответа на get_game_decks: обёртка { ok, catalog }, ошибка { ok: false, error },
+ * либо сразу объект каталога (совместимость со старыми версиями сервера).
+ * В ack может прийти несколько аргументов — берём первый подходящий.
+ */
+function catalogFromSocketAckArgs(...args) {
+  const first = args[0];
+  if (first instanceof Error) {
+    return { err: first };
+  }
+  for (const arg of args) {
+    if (arg == null || typeof arg !== 'object') continue;
+    if (arg.ok === false && typeof arg.error === 'string') {
+      return { err: new Error(arg.error) };
+    }
+    if (arg.ok === true && isDeckCatalogShape(arg.catalog)) {
+      return { catalog: arg.catalog };
+    }
+    if (isDeckCatalogShape(arg)) {
+      return { catalog: arg };
+    }
+  }
+  return { err: new Error('Неверный ответ get_game_decks') };
+}
+
 /**
  * @returns {Promise<Record<string, { id: string; title: string; description: string }[]>>}
  */
@@ -21,22 +56,17 @@ function fetchGameDecksViaSocket() {
   return new Promise((resolve, reject) => {
     const s = getSocket();
     const run = () => {
-      /* Один аргумент: либо Error (таймаут), либо тело ответа от сервера. */
-      s.timeout(12000).emit('get_game_decks', (first) => {
-        if (first instanceof Error) {
-          reject(first);
+      s.timeout(12000).emit('get_game_decks', (...ackArgs) => {
+        const { err, catalog } = catalogFromSocketAckArgs(...ackArgs);
+        if (err) {
+          reject(err);
           return;
         }
-        const res = first;
-        if (res?.ok && res.catalog && typeof res.catalog === 'object') {
-          resolve(res.catalog);
+        if (catalog) {
+          resolve(catalog);
           return;
         }
-        reject(
-          new Error(
-            typeof res?.error === 'string' ? res.error : 'Неверный ответ get_game_decks'
-          )
-        );
+        reject(new Error('Неверный ответ get_game_decks'));
       });
     };
 
