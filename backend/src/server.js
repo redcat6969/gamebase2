@@ -49,6 +49,16 @@ app.get('/api/game-decks', (_req, res) => {
 });
 
 io.on('connection', (socket) => {
+  /** Каталог колод без отдельного HTTP /api (на некоторых хостингах проксируют только /socket.io). */
+  socket.on('get_game_decks', (cb) => {
+    if (typeof cb !== 'function') return;
+    try {
+      cb({ ok: true, catalog: getDeckCatalogMeta() });
+    } catch (e) {
+      cb({ ok: false, error: String(e?.message ?? e) });
+    }
+  });
+
   socket.on('host_create_room', (payload = {}) => {
     try {
       const sessionToken = payload.sessionToken ? String(payload.sessionToken) : null;
