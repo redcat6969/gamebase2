@@ -1,0 +1,8 @@
+{
+  "id": "default",
+  "title": "Классическая колода",
+  "description": "Большой общий список слов для поля 5×5 (как в codenamesWordBank.js).",
+  "itemsRef": {
+    "kind": "codenames_word_bank"
+  }
+}

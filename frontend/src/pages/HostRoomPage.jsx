@@ -4,11 +4,12 @@ import { motion, AnimatePresence } from 'framer-motion';
 import QRCode from 'qrcode';
 import { getSocket } from '../socket.js';
 import GameContainer from '../components/GameContainer.jsx';
-import GameStartSetupModal from '../components/GameStartSetupModal.jsx';
-import GameRulesModal from '../components/GameRulesModal.jsx';
+import GameLaunchModal from '../components/GameLaunchModal.jsx';
 import AvatarPicker from '../components/AvatarPicker.jsx';
 import PlayerAvatar from '../components/PlayerAvatar.jsx';
 import { LOBBY_GAME_CARDS } from '../data/gamesCatalog.js';
+import { gameRulesPath } from '../data/gameRulesRoutes.js';
+import { useGameDecksCatalog } from '../hooks/useGameDecksCatalog.js';
 import { DEFAULT_AVATAR_ID } from '../data/avatarOptions.js';
 
 function normalizeRoomCode(code) {
@@ -62,11 +63,12 @@ export default function HostRoomPage() {
   const [playerId, setPlayerId] = useState(null);
   const [creating, setCreating] = useState(false);
   const [totalRounds, setTotalRounds] = useState(3);
-  /** Настройки выбранной игры — только после «Начать игру» */
-  const [gameSetupOpen, setGameSetupOpen] = useState(false);
-  /** Модалка «Подробные правила» */
-  const [rulesGame, setRulesGame] = useState(
+  /** Модалка: выбор колоды и запуск игры */
+  const [launchGameType, setLaunchGameType] = useState(
     /** @type {null | 'common_guess' | 'codenames' | 'never_have_i_ever'} */ (null),
+  );
+  const [selectedDeckId, setSelectedDeckId] = useState(
+    /** @type {string | null} */ (null),
   );
   const creatorNameSubmittedRef = useRef('');
   const creatorAvatarSubmittedRef = useRef(DEFAULT_AVATAR_ID);
@@ -74,6 +76,13 @@ export default function HostRoomPage() {
   const lastRoomRevRef = useRef(0);
   const codeRef = useRef(null);
   const codeParamRef = useRef(codeParam);
+  const shareCopiedTimerRef = useRef(null);
+  const [shareLinkCopied, setShareLinkCopied] = useState(false);
+  const {
+    catalog: gameDecksCatalog,
+    error: gameDecksError,
+    loading: gameDecksLoading,
+  } = useGameDecksCatalog();
 
   const code =
     codeParam === 'new' ? null : normalizeRoomCode(codeParam) || codeParam;
@@ -89,10 +98,59 @@ export default function HostRoomPage() {
     return `${window.location.origin}/room/${code}/play`;
   }, [code]);
 
+  const rulesReturnTo = useMemo(
+    () => (!code || codeParam === 'new' ? '/room/new/host' : `/room/${code}/host`),
+    [code, codeParam],
+  );
+
   useEffect(() => {
     if (!code || !playUrl) return;
     QRCode.toDataURL(playUrl, { margin: 1, width: 220 }).then(setQrDataUrl);
   }, [code, playUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (shareCopiedTimerRef.current) {
+        clearTimeout(shareCopiedTimerRef.current);
+      }
+    };
+  }, []);
+
+  const copyRoomPlayLink = useCallback(async () => {
+    if (!playUrl) return;
+    const ok = async () => {
+      if (shareCopiedTimerRef.current) clearTimeout(shareCopiedTimerRef.current);
+      setShareLinkCopied(true);
+      shareCopiedTimerRef.current = setTimeout(() => {
+        setShareLinkCopied(false);
+        shareCopiedTimerRef.current = null;
+      }, 2200);
+    };
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(playUrl);
+        await ok();
+        return;
+      }
+    } catch {
+      /* fallback */
+    }
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = playUrl;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      await ok();
+    } catch {
+      setHostError('Не удалось скопировать ссылку');
+      setTimeout(() => setHostError(''), 3000);
+    }
+  }, [playUrl]);
 
   const persistCreator = useCallback((c, data) => {
     sessionStorage.setItem(storageKeyCreator(c), JSON.stringify(data));
@@ -189,6 +247,7 @@ export default function HostRoomPage() {
         NOT_HOST: 'Только создатель может начать игру.',
         NEED_PLAYERS: 'Нужен хотя бы один игрок в комнате.',
         ROOM_NOT_FOUND: 'Комната не найдена на сервере.',
+        BAD_DECK: 'Выбрана недоступная колода. Обновите страницу и попробуйте снова.',
       };
       setStartError(map[p?.code] ?? p?.message ?? p?.code ?? 'Не удалось начать игру');
     }
@@ -252,51 +311,32 @@ export default function HostRoomPage() {
     });
   }
 
-  function confirmStartGameFromSetup() {
-    const c = normalizeRoomCode(code);
-    if (!c) {
-      setStartError('Некорректный код комнаты');
-      setGameSetupOpen(false);
-      return;
-    }
+  function openLaunchModal(nextType) {
     setStartError('');
-    socket.emit('start_game', {
-      code: c,
-      gameType: 'common_guess',
-      options: {
-        roundSeconds: 60,
-        totalRounds,
-      },
-    });
-    setGameSetupOpen(false);
+    setSelectedDeckId(null);
+    setLaunchGameType(nextType);
   }
 
-  function startCodenamesGame() {
+  function confirmLaunchFromModal() {
     const c = normalizeRoomCode(code);
-    if (!c) {
-      setStartError('Некорректный код комнаты');
+    if (!c || !launchGameType || !selectedDeckId) {
+      setStartError('Некорректный код комнаты или не выбрана колода');
       return;
     }
     setStartError('');
-    socket.emit('start_game', {
-      code: c,
-      gameType: 'codenames',
-      options: {},
-    });
-  }
-
-  function startNeverHaveIEverGame() {
-    const c = normalizeRoomCode(code);
-    if (!c) {
-      setStartError('Некорректный код комнаты');
-      return;
+    /** @type {Record<string, unknown>} */
+    const options = { deckId: selectedDeckId };
+    if (launchGameType === 'common_guess') {
+      options.roundSeconds = 60;
+      options.totalRounds = totalRounds;
     }
-    setStartError('');
     socket.emit('start_game', {
       code: c,
-      gameType: 'never_have_i_ever',
-      options: {},
+      gameType: launchGameType,
+      options,
     });
+    setLaunchGameType(null);
+    setSelectedDeckId(null);
   }
 
   const hasLiveGameState =
@@ -320,8 +360,11 @@ export default function HostRoomPage() {
   const participants = room?.participants ?? [];
 
   useEffect(() => {
-    if (inGame && gameSetupOpen) setGameSetupOpen(false);
-  }, [inGame, gameSetupOpen]);
+    if (inGame && launchGameType) {
+      setLaunchGameType(null);
+      setSelectedDeckId(null);
+    }
+  }, [inGame, launchGameType]);
 
   if (codeParam === 'new') {
     return (
@@ -381,13 +424,18 @@ export default function HostRoomPage() {
         animate={{ opacity: 1 }}
         className="max-w-3xl mx-auto"
       >
-        {(hostError || startError) && (
+        {(hostError || startError || gameDecksError) && (
           <div className="mb-6 rounded-xl border border-amber-700/50 bg-amber-950/40 px-4 py-3 text-amber-100 text-sm">
             {startError || hostError}
+            {gameDecksError ? (
+              <span className="block">
+                Не удалось загрузить список колод: {gameDecksError}
+              </span>
+            ) : null}
           </div>
         )}
         {!inGame && (
-          <div className="mb-8 rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
+          <div className="mb-8 rounded-3xl border border-slate-800 bg-slate-900/50 p-6">
             <div className="flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0 w-full text-center sm:max-w-lg sm:text-left">
                 <p className="text-slate-500 text-sm uppercase tracking-wider">
@@ -396,6 +444,21 @@ export default function HostRoomPage() {
                 <p className="text-5xl font-black font-mono tracking-widest text-white">
                   {code}
                 </p>
+                {playUrl ? (
+                  <button
+                    type="button"
+                    onClick={() => void copyRoomPlayLink()}
+                    className="mt-3 inline-flex items-center justify-center gap-2 rounded-xl border border-violet-500/40 bg-violet-950/50 px-4 py-2.5 text-sm font-semibold text-violet-100 hover:bg-violet-950/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 mx-auto sm:mx-0"
+                  >
+                    {shareLinkCopied ? (
+                      <>
+                        <span aria-hidden>✓</span> Ссылка скопирована
+                      </>
+                    ) : (
+                      'Поделиться комнатой'
+                    )}
+                  </button>
+                ) : null}
                 <JoinRoomHint className="mt-4 hidden text-sm leading-relaxed text-slate-400 sm:block" />
               </div>
               <div className="mx-auto flex shrink-0 flex-col items-center sm:mx-0 sm:items-end">
@@ -424,7 +487,7 @@ export default function HostRoomPage() {
               transition={{ duration: 0.3 }}
               className="mb-8"
             >
-              <div className="mb-10 rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
+              <div className="mb-10 rounded-3xl border border-slate-800 bg-slate-900/50 p-6">
                 <h2 className="mb-3 text-lg font-semibold text-slate-300">
                   Участники
                 </h2>
@@ -469,7 +532,7 @@ export default function HostRoomPage() {
                 <ul className="grid gap-4 sm:grid-cols-2">
                   {LOBBY_GAME_CARDS.map((card) => (
                     <li key={card.id}>
-                      <article className="rounded-2xl border border-slate-800 bg-slate-950/40 overflow-hidden flex flex-col h-full">
+                      <article className="rounded-3xl border border-slate-800 bg-slate-950/40 overflow-hidden flex flex-col h-full">
                         <div className="aspect-[16/10] bg-slate-950 border-b border-slate-800/80">
                           <img
                             src={card.image}
@@ -478,7 +541,7 @@ export default function HostRoomPage() {
                             draggable={false}
                           />
                         </div>
-                        <div className="p-4 flex flex-col gap-2 flex-1">
+                        <div className="p-6 flex flex-col gap-2 flex-1">
                           <h4 className="text-xl font-semibold leading-snug text-white sm:text-2xl">
                             {card.title}
                           </h4>
@@ -507,18 +570,18 @@ export default function HostRoomPage() {
                                     ? undefined
                                     : 'Начать может только создатель комнаты в лобби'
                                 }
-                                onClick={() => setGameSetupOpen(true)}
+                                onClick={() => openLaunchModal('common_guess')}
                                 className="w-full rounded-xl bg-fuchsia-600 hover:bg-fuchsia-500 disabled:opacity-40 disabled:cursor-not-allowed py-3 text-lg font-bold"
                               >
                                 Начать игру
                               </button>
-                              <button
-                                type="button"
-                                onClick={() => setRulesGame('common_guess')}
-                                className="w-full rounded-xl border border-fuchsia-500/45 bg-fuchsia-950/20 py-2.5 text-sm font-semibold text-fuchsia-200/95 hover:bg-fuchsia-950/40"
+                              <Link
+                                to={gameRulesPath('common_guess')}
+                                state={{ returnTo: rulesReturnTo }}
+                                className="block w-full rounded-xl border border-fuchsia-500/45 bg-fuchsia-950/20 py-3 text-center text-lg font-bold text-fuchsia-200/95 hover:bg-fuchsia-950/40"
                               >
                                 Подробные правила
-                              </button>
+                              </Link>
                             </div>
                           ) : card.playable && card.gameType === 'codenames' ? (
                             <div className="mt-2 flex flex-col gap-2">
@@ -530,18 +593,18 @@ export default function HostRoomPage() {
                                     ? undefined
                                     : 'Начать может только создатель комнаты в лобби'
                                 }
-                                onClick={startCodenamesGame}
+                                onClick={() => openLaunchModal('codenames')}
                                 className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed py-3 text-lg font-bold"
                               >
                                 Начать игру
                               </button>
-                              <button
-                                type="button"
-                                onClick={() => setRulesGame('codenames')}
-                                className="w-full rounded-xl border border-emerald-500/45 bg-emerald-950/20 py-2.5 text-sm font-semibold text-emerald-200/95 hover:bg-emerald-950/40"
+                              <Link
+                                to={gameRulesPath('codenames')}
+                                state={{ returnTo: rulesReturnTo }}
+                                className="block w-full rounded-xl border border-emerald-500/45 bg-emerald-950/20 py-3 text-center text-lg font-bold text-emerald-200/95 hover:bg-emerald-950/40"
                               >
                                 Подробные правила
-                              </button>
+                              </Link>
                             </div>
                           ) : card.playable && card.gameType === 'never_have_i_ever' ? (
                             <div className="mt-2 flex flex-col gap-2">
@@ -553,18 +616,18 @@ export default function HostRoomPage() {
                                     ? undefined
                                     : 'Начать может только создатель комнаты в лобби'
                                 }
-                                onClick={startNeverHaveIEverGame}
+                                onClick={() => openLaunchModal('never_have_i_ever')}
                                 className="w-full rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed py-3 text-lg font-bold"
                               >
                                 Начать игру
                               </button>
-                              <button
-                                type="button"
-                                onClick={() => setRulesGame('never_have_i_ever')}
-                                className="w-full rounded-xl border border-rose-500/45 bg-rose-950/25 py-2.5 text-sm font-semibold text-rose-100/95 hover:bg-rose-950/45"
+                              <Link
+                                to={gameRulesPath('never_have_i_ever')}
+                                state={{ returnTo: rulesReturnTo }}
+                                className="block w-full rounded-xl border border-rose-500/45 bg-rose-950/25 py-3 text-center text-lg font-bold text-rose-100/95 hover:bg-rose-950/45"
                               >
                                 Подробные правила
-                              </button>
+                              </Link>
                             </div>
                           ) : null}
                         </div>
@@ -594,18 +657,24 @@ export default function HostRoomPage() {
           />
         </motion.div>
 
-        <GameStartSetupModal
-          open={gameSetupOpen}
-          gameType="common_guess"
+        <GameLaunchModal
+          open={launchGameType != null}
+          gameType={launchGameType}
+          decks={
+            launchGameType
+              ? gameDecksCatalog?.[launchGameType] ?? []
+              : []
+          }
+          decksLoading={gameDecksLoading}
+          selectedDeckId={selectedDeckId}
+          onSelectDeck={setSelectedDeckId}
           totalRounds={totalRounds}
           onTotalRoundsChange={setTotalRounds}
-          onCancel={() => setGameSetupOpen(false)}
-          onConfirm={confirmStartGameFromSetup}
-        />
-
-        <GameRulesModal
-          rulesGame={rulesGame}
-          onClose={() => setRulesGame(null)}
+          onCancel={() => {
+            setLaunchGameType(null);
+            setSelectedDeckId(null);
+          }}
+          onConfirm={confirmLaunchFromModal}
         />
 
         {!inGame && (

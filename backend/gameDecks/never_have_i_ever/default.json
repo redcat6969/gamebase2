@@ -1,0 +1,9 @@
+{
+  "id": "default",
+  "title": "Полная колода",
+  "description": "Все формулировки из основного файла.",
+  "itemsRef": {
+    "kind": "file",
+    "path": "../../questions_never.json"
+  }
+}

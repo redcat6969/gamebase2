@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import CodenamesSetupPanel, { SessionScoresTable } from './CodenamesSetupPanel.jsx';
 import CodenamesAnswerKeyGrid from './CodenamesAnswerKeyGrid.jsx';
+import CodenamesTeamRemaining from './CodenamesTeamRemaining.jsx';
 
 function operativeCardClass(w) {
   if (w.isOpen) {
@@ -320,6 +321,12 @@ export default function PlayerView({ state, roomCode, socket, playerId }) {
           </p>
         </div>
       ) : null}
+      <CodenamesTeamRemaining
+        words={words}
+        redCardsRemaining={state.redCardsRemaining}
+        blueCardsRemaining={state.blueCardsRemaining}
+        className="shrink-0 px-1"
+      />
       <div className="w-full flex min-w-0 justify-center px-0.5">
         <div
           className="grid min-h-0 w-[min(100%,calc((100dvh-15rem)*1.35),calc(100vw-1rem))] max-h-[calc(100dvh-15rem)] max-w-full grid-cols-[repeat(5,minmax(0,1fr))] grid-rows-[repeat(5,minmax(0,1fr))] gap-[clamp(2px,1.2vmin,8px)] aspect-[1.35]"

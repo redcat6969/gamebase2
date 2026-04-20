@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { normalizeAvatarId } from '../avatarIds.js';
 import { BaseGame } from './BaseGame.js';
+import { resolveDeck } from '../gameDecks/index.js';
 
 /** До скольки слов принимаем с одного игрока */
 const MAX_WORDS = 5;
@@ -75,6 +76,10 @@ export class CommonGuess extends BaseGame {
     this.roundSubmissions = new Map();
     /** @type {Record<string, unknown> | null} */
     this.lastRoundResults = null;
+    /** @type {string} */
+    this.deckId = 'default';
+    /** @type {string} */
+    this.deckTitle = '';
   }
 
   /** @param {Record<string, unknown>} [options] */
@@ -87,8 +92,19 @@ export class CommonGuess extends BaseGame {
     this.totalRounds = Number.isFinite(trRaw)
       ? Math.max(1, Math.min(5, Math.floor(trRaw)))
       : 3;
+
+    const deckId =
+      typeof options.deckId === 'string' && options.deckId.trim()
+        ? options.deckId.trim()
+        : 'default';
+    this.deckId = deckId;
+    const deck = resolveDeck('common_guess', deckId);
+    this.deckTitle = deck?.title ?? 'Колода';
+    const questionBank =
+      deck?.items?.length > 0 ? deck.items : QUESTION_BANK;
+
     this.gameQuestions = CommonGuess.pickRandomQuestions(
-      QUESTION_BANK,
+      questionBank,
       this.totalRounds
     );
     this.currentMacroRoundIndex = 0;
@@ -638,6 +654,8 @@ export class CommonGuess extends BaseGame {
     return {
       gameType: 'common_guess',
       view: 'host',
+      deckId: this.deckId,
+      deckTitle: this.deckTitle,
       phase: this.phase,
       prompt: this.prompt,
       maxWords: MAX_WORDS,
@@ -699,6 +717,8 @@ export class CommonGuess extends BaseGame {
     return {
       gameType: 'common_guess',
       view: 'player',
+      deckId: this.deckId,
+      deckTitle: this.deckTitle,
       phase: this.phase,
       prompt: this.prompt,
       maxWords: MAX_WORDS,

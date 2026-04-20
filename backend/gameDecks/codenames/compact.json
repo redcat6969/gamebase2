@@ -1,0 +1,10 @@
+{
+  "id": "compact",
+  "title": "Компактная (тест)",
+  "description": "Укороченный срез того же банка — для проверки смены колоды.",
+  "itemsRef": {
+    "kind": "codenames_word_bank_slice",
+    "start": 0,
+    "end": 42
+  }
+}

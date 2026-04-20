@@ -1,5 +1,6 @@
 import { createGame, normalizeGameType } from './games/index.js';
 import { normalizeAvatarId } from './avatarIds.js';
+import { assertValidDeck } from './gameDecks/index.js';
 
 /** @typedef {'LOBBY' | 'PLAYING' | 'RESULTS'} RoomStatus */
 /** @typedef {'player' | 'spectator'} ParticipantRole */
@@ -309,6 +310,17 @@ export class RoomManager {
       return { ok: false, error: 'NEED_PLAYERS' };
     }
 
+    const normalizedType = normalizeGameType(gameType);
+    const startOpts = { ...(options && typeof options === 'object' ? options : {}) };
+    const deckId =
+      typeof startOpts.deckId === 'string' && startOpts.deckId.trim()
+        ? startOpts.deckId.trim()
+        : 'default';
+    startOpts.deckId = deckId;
+    if (!assertValidDeck(normalizedType, deckId).ok) {
+      return { ok: false, error: 'BAD_DECK' };
+    }
+
     if (room.game && typeof room.game.onEnd === 'function') {
       try {
         room.game.onEnd();
@@ -317,7 +329,6 @@ export class RoomManager {
       }
     }
 
-    const normalizedType = normalizeGameType(gameType);
     room.gameType = normalizedType;
     room.status = 'PLAYING';
 
@@ -354,7 +365,7 @@ export class RoomManager {
     };
 
     room.game = createGame(normalizedType, ctx);
-    room.game.onStart(options);
+    room.game.onStart(startOpts);
 
     const socketIds = new Set();
     if (room.hostSocketId) socketIds.add(room.hostSocketId);

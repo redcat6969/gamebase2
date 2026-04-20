@@ -7,6 +7,7 @@ import cors from 'cors';
 import express from 'express';
 import { KNOWN_GAME_TYPES } from './games/index.js';
 import { RoomManager } from './RoomManager.js';
+import { getDeckCatalogMeta } from './gameDecks/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 try {
@@ -34,6 +35,17 @@ console.log(`Registered games: ${KNOWN_GAME_TYPES.join(', ')}`);
 
 app.get('/health', (_req, res) => {
   res.json({ ok: true });
+});
+
+/** Метаданные колод для экрана выбора (без текстов items) — единый источник с файлами в backend/gameDecks/ */
+app.get('/api/game-decks', (_req, res) => {
+  try {
+    res.json(getDeckCatalogMeta());
+  } catch (e) {
+    res.status(500).json({
+      error: String(e?.message ?? e ?? 'game-decks failed'),
+    });
+  }
 });
 
 io.on('connection', (socket) => {

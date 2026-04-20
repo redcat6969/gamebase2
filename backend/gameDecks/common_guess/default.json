@@ -1,0 +1,9 @@
+{
+  "id": "default",
+  "title": "Полная колода",
+  "description": "Все вопросы из основного набора — разнообразные темы.",
+  "itemsRef": {
+    "kind": "file",
+    "path": "../../questions.json"
+  }
+}

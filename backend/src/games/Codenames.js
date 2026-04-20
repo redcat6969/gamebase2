@@ -1,5 +1,6 @@
 import { BaseGame } from './BaseGame.js';
 import { WORD_BANK } from './codenamesWordBank.js';
+import { resolveDeck } from '../gameDecks/index.js';
 
 /**
  * @typedef {'red' | 'blue' | 'neutral' | 'assassin'} CardColor
@@ -38,14 +39,30 @@ export class Codenames extends BaseGame {
     /** Очки за выигранные партии в этой сессии Codenames (сброс при новом старте из лобби) */
     /** @type {Record<string, number>} */
     this.sessionScores = {};
+    /** @type {string} */
+    this.deckId = 'default';
+    /** @type {string} */
+    this.deckTitle = '';
+    /** @type {string[]} */
+    this._cnWordPool = [];
   }
 
   hostSocketGetsHostState() {
     return false;
   }
 
-  /** @param {Record<string, unknown>} [_options] */
-  onStart(_options) {
+  /** @param {Record<string, unknown>} [options] */
+  onStart(options = {}) {
+    const deckId =
+      typeof options.deckId === 'string' && options.deckId.trim()
+        ? options.deckId.trim()
+        : 'default';
+    this.deckId = deckId;
+    const deck = resolveDeck('codenames', deckId);
+    this.deckTitle = deck?.title ?? 'Колода';
+    const items = deck?.items?.length >= 25 ? deck.items : [...WORD_BANK];
+    this._cnWordPool = items.filter(Boolean);
+
     this.phase = 'setup';
     this.roles = {};
     this.words = [];
@@ -147,7 +164,11 @@ export class Codenames extends BaseGame {
   }
 
   _buildBoard() {
-    const pool = shuffle(WORD_BANK.filter(Boolean));
+    const source =
+      this._cnWordPool.length >= 25
+        ? this._cnWordPool
+        : WORD_BANK.filter(Boolean);
+    const pool = shuffle([...source]);
     const texts = pool.slice(0, 25);
     const first = this.startingTeam;
     const second = first === 'red' ? 'blue' : 'red';
@@ -298,10 +319,25 @@ export class Codenames extends BaseGame {
     return out;
   }
 
+  /** Сколько закрытых карточек каждого цвета (для UI у всех — у оперативников нет color у слов) */
+  _cardsRemaining() {
+    let red = 0;
+    let blue = 0;
+    for (const w of this.words) {
+      if (w.isOpen) continue;
+      if (w.color === 'red') red += 1;
+      else if (w.color === 'blue') blue += 1;
+    }
+    return { red, blue };
+  }
+
   getHostState() {
+    const rem = this._cardsRemaining();
     return {
       gameType: 'codenames',
       view: 'host',
+      deckId: this.deckId,
+      deckTitle: this.deckTitle,
       roomCode: this.code,
       phase: this.phase,
       roles: { ...this.roles },
@@ -314,6 +350,8 @@ export class Codenames extends BaseGame {
       participants: this._serializeParticipants(),
       sessionScores: { ...this.sessionScores },
       sessionLeaderboard: this._sessionLeaderboard(),
+      redCardsRemaining: rem.red,
+      blueCardsRemaining: rem.blue,
     };
   }
 
@@ -338,6 +376,8 @@ export class Codenames extends BaseGame {
       return { ...base, color: null };
     });
 
+    const rem = this._cardsRemaining();
+
     const hostSid =
       typeof this.ctx.getHostSocketId === 'function'
         ? this.ctx.getHostSocketId()
@@ -354,6 +394,8 @@ export class Codenames extends BaseGame {
     return {
       gameType: 'codenames',
       view: 'player',
+      deckId: this.deckId,
+      deckTitle: this.deckTitle,
       roomCode: this.code,
       phase: this.phase,
       showHostControls,
@@ -372,6 +414,8 @@ export class Codenames extends BaseGame {
       sessionScores: { ...this.sessionScores },
       sessionLeaderboard: this._sessionLeaderboard(),
       mySessionScore: this.sessionScores[playerId] ?? 0,
+      redCardsRemaining: rem.red,
+      blueCardsRemaining: rem.blue,
     };
   }
 

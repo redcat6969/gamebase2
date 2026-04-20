@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { normalizeAvatarId } from '../avatarIds.js';
 import { BaseGame } from './BaseGame.js';
+import { resolveDeck } from '../gameDecks/index.js';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 
@@ -50,6 +51,12 @@ export class NeverHaveIEver extends BaseGame {
     /** @type {string[]} */
     this._deck = [];
     this._deckIndex = 0;
+    /** @type {string[]} исходный банк для перемешивания между кругами */
+    this._sourceBank = [];
+    /** @type {string} */
+    this.deckId = 'default';
+    /** @type {string} */
+    this.deckTitle = '';
   }
 
   /** Ложь: ведущий тоже голосует с устройства игрока; «витрина» только у зрителей (getHostState). */
@@ -65,14 +72,28 @@ export class NeverHaveIEver extends BaseGame {
     return this.getHostState();
   }
 
-  /** @param {Record<string, unknown>} [_options] */
-  onStart(_options = {}) {
+  /** @param {Record<string, unknown>} [options] */
+  onStart(options = {}) {
+    const deckId =
+      typeof options.deckId === 'string' && options.deckId.trim()
+        ? options.deckId.trim()
+        : 'default';
+    this.deckId = deckId;
+    const deck = resolveDeck('never_have_i_ever', deckId);
+    this.deckTitle = deck?.title ?? 'Колода';
+    const bankRaw =
+      deck?.items?.length > 0
+        ? deck.items
+        : QUESTION_BANK.length > 0
+          ? [...QUESTION_BANK]
+          : [FALLBACK_STATEMENT];
+    this._sourceBank = [...bankRaw];
+
     this.scores = new Map();
     this.votes = new Map();
     this.roundId = 0;
     this.wasPlayerIds = [];
-    const bank = QUESTION_BANK.length > 0 ? [...QUESTION_BANK] : [FALLBACK_STATEMENT];
-    this._deck = shuffle(bank);
+    this._deck = shuffle([...this._sourceBank]);
     this._deckIndex = 0;
     this._pullNextStatement();
     this.phase = 'voting';
@@ -80,16 +101,21 @@ export class NeverHaveIEver extends BaseGame {
   }
 
   _pullNextStatement() {
+    const refill = () => {
+      const base =
+        this._sourceBank.length > 0
+          ? [...this._sourceBank]
+          : QUESTION_BANK.length > 0
+            ? [...QUESTION_BANK]
+            : [FALLBACK_STATEMENT];
+      return shuffle(base);
+    };
     if (this._deck.length === 0) {
-      this._deck = shuffle(
-        QUESTION_BANK.length > 0 ? [...QUESTION_BANK] : [FALLBACK_STATEMENT]
-      );
+      this._deck = refill();
       this._deckIndex = 0;
     }
     if (this._deckIndex >= this._deck.length) {
-      this._deck = shuffle(
-        QUESTION_BANK.length > 0 ? [...QUESTION_BANK] : [FALLBACK_STATEMENT]
-      );
+      this._deck = refill();
       this._deckIndex = 0;
     }
     this.currentStatement = this._deck[this._deckIndex++] ?? FALLBACK_STATEMENT;
@@ -231,6 +257,8 @@ export class NeverHaveIEver extends BaseGame {
       roomCode: this.code,
       gameType: 'never_have_i_ever',
       view: 'host',
+      deckId: this.deckId,
+      deckTitle: this.deckTitle,
       phase: this.phase,
       roundId: this.roundId,
       currentStatement: this.currentStatement,
@@ -267,6 +295,8 @@ export class NeverHaveIEver extends BaseGame {
       roomCode: this.code,
       gameType: 'never_have_i_ever',
       view: 'player',
+      deckId: this.deckId,
+      deckTitle: this.deckTitle,
       phase: this.phase,
       roundId: this.roundId,
       currentStatement: this.currentStatement,

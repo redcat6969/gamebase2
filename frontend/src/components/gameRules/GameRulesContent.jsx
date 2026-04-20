@@ -1,18 +1,18 @@
-import { useEffect, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-
+/**
+ * Тексты правил игр — общие для лендингов и (при необходимости) других экранов.
+ */
 function Section({ title, children }) {
   return (
     <section className="mb-5 last:mb-0">
-      <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400 mb-2">
+      <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400 mb-2">
         {title}
-      </h3>
+      </h2>
       <div className="text-sm text-slate-300 leading-relaxed space-y-2">{children}</div>
     </section>
   );
 }
 
-function CommonGuessRules() {
+export function CommonGuessRules() {
   return (
     <>
       <Section title="О чём игра">
@@ -88,7 +88,7 @@ function CommonGuessRules() {
   );
 }
 
-function NeverHaveIEverRules() {
+export function NeverHaveIEverRules() {
   return (
     <>
       <Section title="О чём игра">
@@ -124,7 +124,7 @@ function NeverHaveIEverRules() {
   );
 }
 
-function CodenamesRules() {
+export function CodenamesRules() {
   return (
     <>
       <Section title="О чём игра">
@@ -240,114 +240,10 @@ function CodenamesRules() {
 }
 
 /**
- * @param {{
- *   rulesGame: 'common_guess' | 'codenames' | 'never_have_i_ever' | null;
- *   onClose: () => void;
- * }} props
+ * @param {{ gameType: 'common_guess' | 'codenames' | 'never_have_i_ever' }} props
  */
-export default function GameRulesModal({ rulesGame, onClose }) {
-  const [present, setPresent] = useState(false);
-  const [displayType, setDisplayType] = useState(
-    /** @type {'common_guess' | 'codenames' | 'never_have_i_ever' | null} */ (
-      null
-    ),
-  );
-
-  useEffect(() => {
-    if (rulesGame) {
-      setDisplayType(rulesGame);
-      setPresent(true);
-    }
-  }, [rulesGame]);
-
-  const active = displayType;
-
-  const title =
-    active === 'common_guess'
-      ? 'Как играть: Угадай общее'
-      : active === 'codenames'
-        ? 'Как играть: Кодовые имена'
-        : active === 'never_have_i_ever'
-          ? 'Как играть: Я никогда не'
-          : 'Правила';
-
-  const accent =
-    active === 'common_guess'
-      ? 'border-fuchsia-500/40'
-      : active === 'codenames'
-        ? 'border-emerald-500/40'
-        : active === 'never_have_i_ever'
-          ? 'border-rose-500/40'
-          : 'border-slate-700';
-
-  function handleClose() {
-    setPresent(false);
-  }
-
-  return (
-    <AnimatePresence
-      onExitComplete={() => {
-        setDisplayType(null);
-        onClose();
-      }}
-    >
-      {present && active && (
-        <motion.div
-          key={active}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.2 }}
-        >
-          <button
-            type="button"
-            aria-label="Закрыть"
-            className="absolute inset-0 bg-black/65 backdrop-blur-sm"
-            onClick={handleClose}
-          />
-          <motion.div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="game-rules-title"
-            initial={{ opacity: 0, y: 16, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 12, scale: 0.98 }}
-            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
-            className={`relative flex max-h-[min(90vh,720px)] w-full max-w-lg flex-col rounded-2xl border bg-slate-900 shadow-2xl ${accent}`}
-          >
-            <div className="shrink-0 border-b border-slate-800 px-5 py-4 sm:px-6">
-              <h2
-                id="game-rules-title"
-                className="text-lg font-bold text-white pr-8 sm:text-xl"
-              >
-                {title}
-              </h2>
-              <p className="mt-1 text-xs text-slate-500">
-                Коротко для тех, кто ни разу не играл в эту игру вживую.
-              </p>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4 sm:px-6 sm:py-5">
-              {active === 'common_guess' ? (
-                <CommonGuessRules />
-              ) : active === 'codenames' ? (
-                <CodenamesRules />
-              ) : (
-                <NeverHaveIEverRules />
-              )}
-            </div>
-            <div className="shrink-0 border-t border-slate-800 p-4 sm:px-6">
-              <button
-                type="button"
-                onClick={handleClose}
-                className="w-full rounded-xl bg-slate-700 hover:bg-slate-600 py-3 text-sm font-semibold text-white"
-              >
-                Понятно, закрыть
-              </button>
-            </div>
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>
-  );
+export function GameRulesArticle({ gameType }) {
+  if (gameType === 'common_guess') return <CommonGuessRules />;
+  if (gameType === 'codenames') return <CodenamesRules />;
+  return <NeverHaveIEverRules />;
 }

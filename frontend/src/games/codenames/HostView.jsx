@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion';
 import CodenamesAnswerKeyGrid from './CodenamesAnswerKeyGrid.jsx';
 import CodenamesSetupPanel from './CodenamesSetupPanel.jsx';
+import CodenamesTeamRemaining from './CodenamesTeamRemaining.jsx';
 
 function cardTone(color, isOpen) {
   if (!isOpen) return 'bg-slate-700 border-slate-600 text-white';
@@ -96,7 +97,14 @@ export default function HostView({ state, roomCode, socket, readOnly = false }) 
       {finished ? (
         <CodenamesAnswerKeyGrid words={words} />
       ) : (
-        <div className="flex w-full min-w-0 justify-center px-0.5">
+        <>
+          <CodenamesTeamRemaining
+            words={words}
+            redCardsRemaining={state.redCardsRemaining}
+            blueCardsRemaining={state.blueCardsRemaining}
+            className="mb-4 shrink-0"
+          />
+          <div className="flex w-full min-w-0 justify-center px-0.5">
           <div
             className="grid min-h-0 w-[min(100%,calc((100dvh-15rem)*1.35),calc(100vw-1.5rem))] max-h-[calc(100dvh-15rem)] max-w-full grid-cols-[repeat(5,minmax(0,1fr))] grid-rows-[repeat(5,minmax(0,1fr))] gap-[clamp(2px,1.2vmin,8px)] aspect-[1.35]"
           >
@@ -105,6 +113,7 @@ export default function HostView({ state, roomCode, socket, readOnly = false }) 
             ))}
           </div>
         </div>
+        </>
       )}
     </div>
   );
