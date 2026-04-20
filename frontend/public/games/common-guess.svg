@@ -14,7 +14,7 @@
   <!-- TV -->
   <rect x="72" y="56" width="240" height="148" rx="12" stroke="url(#cg-border)" stroke-width="2.5" fill="#1e1b4b"/>
   <rect x="88" y="72" width="208" height="116" rx="8" fill="#0f172a" stroke="#4c1d95" stroke-opacity="0.5"/>
-  <text x="192" y="138" fill="#c4b5fd" font-family="system-ui,sans-serif" font-size="22" font-weight="600">?</text>
+  <text x="192" y="138" fill="#c4b5fd" font-family="Unbounded,system-ui,sans-serif" font-size="22" font-weight="600">?</text>
   <rect x="176" y="212" width="32" height="8" rx="3" fill="#475569"/>
   <rect x="156" y="220" width="72" height="6" rx="3" fill="#334155"/>
   <!-- Phone -->

@@ -1,10 +1,12 @@
 import { Codenames } from './Codenames.js';
 import { CommonGuess } from './CommonGuess.js';
+import { NeverHaveIEver } from './NeverHaveIEver.js';
 
 /** @type {Record<string, typeof import('./BaseGame.js').BaseGame>} */
 export const GAME_REGISTRY = {
   codenames: Codenames,
   common_guess: CommonGuess,
+  never_have_i_ever: NeverHaveIEver,
 };
 
 /** Допустимые ключи после нормализации — см. normalizeGameType */
@@ -24,6 +26,10 @@ export function normalizeGameType(raw) {
     commonguess: 'common_guess',
     'code-names': 'codenames',
     codename: 'codenames',
+    'never-have-i-ever': 'never_have_i_ever',
+    neverhaveiever: 'never_have_i_ever',
+    nhie: 'never_have_i_ever',
+    never_have_ever: 'never_have_i_ever',
   };
   return aliases[s] ?? s;
 }

@@ -7,10 +7,12 @@ export function hostEmitCode(state, roomCodeProp) {
   return fromProp.length === 4 ? fromProp : '';
 }
 
-function SessionScoresTable({ leaderboard }) {
+export function SessionScoresTable({ leaderboard, className = '' }) {
   if (!Array.isArray(leaderboard) || leaderboard.length === 0) return null;
   return (
-    <div className="mb-6 rounded-xl border border-slate-600/60 bg-slate-900/50 p-4">
+    <div
+      className={`mb-6 rounded-xl border border-slate-600/60 bg-slate-900/50 p-4 ${className}`.trim()}
+    >
       <h3 className="text-center text-slate-400 text-xs uppercase tracking-wider mb-1">
         Общий счёт
       </h3>
@@ -40,13 +42,14 @@ function SessionScoresTable({ leaderboard }) {
 
 /**
  * Экран настройки: участники, капитаны, старт.
- * @param {{ readOnly?: boolean }} [props]
+ * @param {{ readOnly?: boolean, afterCaptainSelection?: import('react').ReactNode }} [props]
  */
 export default function CodenamesSetupPanel({
   state,
   roomCode,
   socket,
   readOnly = false,
+  afterCaptainSelection = null,
 }) {
   if (!state || state.phase !== 'setup') return null;
 
@@ -89,66 +92,70 @@ export default function CodenamesSetupPanel({
         <h2 className="text-xl font-bold text-emerald-200 mb-4 text-center">
           Кодовые имена — подготовка
         </h2>
-        <SessionScoresTable leaderboard={leaderboard} />
+        <h3 className="text-center text-sm uppercase tracking-wider text-slate-400 mb-3">
+          Выбор капитанов
+        </h3>
         <ul className="space-y-2">
           {participants.map((p) => {
             const r = roles[p.id];
-            const label =
-              r?.isCaptain && r.team === 'red'
-                ? 'Капитан 🔴'
-                : r?.isCaptain && r.team === 'blue'
-                  ? 'Капитан 🔵'
-                  : r?.team === 'red'
-                    ? 'Красные'
-                    : r?.team === 'blue'
-                      ? 'Синие'
-                      : '—';
+            const isRedCap = Boolean(r?.isCaptain && r.team === 'red');
+            const isBlueCap = Boolean(r?.isCaptain && r.team === 'blue');
             return (
               <li
                 key={p.id}
                 className="flex items-center gap-3 rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2 text-slate-200"
               >
                 <PlayerAvatar avatarId={p.avatar} size="sm" />
-                <span className="flex-1">{p.name || 'Игрок'}</span>
-                <span className="text-slate-500 text-sm">{label}</span>
+                <span className="flex-1 min-w-0 truncate">{p.name || 'Игрок'}</span>
+                <div className="flex shrink-0 flex-wrap gap-2 justify-end" aria-hidden>
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1.5 text-xs font-semibold ${
+                      isRedCap
+                        ? 'border-red-400 bg-red-600 text-white'
+                        : 'border-red-800/80 bg-red-950/50 text-red-300/50'
+                    }`}
+                  >
+                    <span>Капитан</span>
+                    <span className="text-base leading-none">🔴</span>
+                  </span>
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1.5 text-xs font-semibold ${
+                      isBlueCap
+                        ? 'border-blue-400 bg-blue-600 text-white'
+                        : 'border-blue-800/80 bg-blue-950/50 text-blue-300/50'
+                    }`}
+                  >
+                    <span>Капитан</span>
+                    <span className="text-base leading-none">🔵</span>
+                  </span>
+                </div>
               </li>
             );
           })}
         </ul>
+        <div className="mt-6">
+          <SessionScoresTable leaderboard={leaderboard} />
+        </div>
       </div>
     );
   }
 
   return (
     <div className="rounded-2xl border border-emerald-500/30 bg-gradient-to-b from-slate-950 to-slate-900 p-6">
-      <button
-        type="button"
-        onClick={returnToGameSelection}
-        className="mb-5 inline-flex items-center gap-2 rounded-xl border border-slate-600 bg-slate-900/80 px-4 py-2.5 text-sm font-medium text-slate-200 hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
-      >
-        <span aria-hidden>←</span>
-        Вернуться к выбору игры
-      </button>
       <h2 className="text-2xl font-bold text-emerald-200 mb-2 text-center">
         Кодовые имена — подготовка
       </h2>
       <p className="text-center text-slate-400 text-sm mb-6">
         Назначьте капитанов команд и дождитесь выбора сторон игроками, затем нажмите «Начать игру».
       </p>
-      <SessionScoresTable leaderboard={leaderboard} />
-      <ul className="space-y-3 mb-8">
+      <h3 className="text-center text-sm uppercase tracking-wider text-slate-400 mb-4">
+        Выбор капитанов
+      </h3>
+      <ul className={`space-y-3 ${afterCaptainSelection ? 'mb-0' : 'mb-8'}`}>
         {participants.map((p) => {
           const r = roles[p.id];
-          const label =
-            r?.isCaptain && r.team === 'red'
-              ? 'Капитан 🔴'
-              : r?.isCaptain && r.team === 'blue'
-                ? 'Капитан 🔵'
-                : r?.team === 'red'
-                  ? 'Красные'
-                  : r?.team === 'blue'
-                    ? 'Синие'
-                    : '—';
+          const isRedCap = Boolean(r?.isCaptain && r.team === 'red');
+          const isBlueCap = Boolean(r?.isCaptain && r.team === 'blue');
           return (
             <li
               key={p.id}
@@ -158,33 +165,59 @@ export default function CodenamesSetupPanel({
               <span className="text-slate-100 font-medium flex-1 min-w-[8rem]">
                 {p.name || 'Игрок'}
               </span>
-              <span className="text-slate-500 text-sm">{label}</span>
-              <div className="flex gap-2">
+              <div className="flex shrink-0 gap-2">
                 <button
                   type="button"
                   onClick={() => assignCaptain(p.id, 'red')}
-                  className="rounded-lg bg-red-950/80 hover:bg-red-900 border border-red-700/60 px-3 py-2 text-sm text-red-100"
+                  aria-pressed={isRedCap}
+                  aria-label="Сделать капитаном красных"
+                  className={`inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border px-2.5 sm:px-3 py-2 text-sm font-semibold transition-colors ${
+                    isRedCap
+                      ? 'border-red-400 bg-red-600 text-white shadow-sm'
+                      : 'border-red-700/60 bg-red-950/80 text-red-100 hover:bg-red-900'
+                  }`}
                 >
-                  Капитан 🔴
+                  <span>Капитан</span>
+                  <span aria-hidden className="text-base leading-none">
+                    🔴
+                  </span>
                 </button>
                 <button
                   type="button"
                   onClick={() => assignCaptain(p.id, 'blue')}
-                  className="rounded-lg bg-blue-950/80 hover:bg-blue-900 border border-blue-700/60 px-3 py-2 text-sm text-blue-100"
+                  aria-pressed={isBlueCap}
+                  aria-label="Сделать капитаном синих"
+                  className={`inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border px-2.5 sm:px-3 py-2 text-sm font-semibold transition-colors ${
+                    isBlueCap
+                      ? 'border-blue-400 bg-blue-600 text-white shadow-sm'
+                      : 'border-blue-700/60 bg-blue-950/80 text-blue-100 hover:bg-blue-900'
+                  }`}
                 >
-                  Капитан 🔵
+                  <span>Капитан</span>
+                  <span aria-hidden className="text-base leading-none">
+                    🔵
+                  </span>
                 </button>
               </div>
             </li>
           );
         })}
       </ul>
+      {afterCaptainSelection}
       <button
         type="button"
         onClick={startMatch}
         className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-500 py-4 text-lg font-bold text-white"
       >
         Начать игру
+      </button>
+      <button
+        type="button"
+        onClick={returnToGameSelection}
+        className="mt-3 w-full inline-flex items-center justify-center gap-2 rounded-xl border border-slate-600 bg-slate-900/80 py-4 text-lg font-bold text-slate-200 hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+      >
+        <span aria-hidden>←</span>
+        Вернуться к выбору игры
       </button>
     </div>
   );

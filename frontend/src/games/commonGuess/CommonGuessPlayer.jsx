@@ -34,7 +34,6 @@ export default function CommonGuessPlayer({
   /** Локальный список оставшихся слов (синхронизируется с сервером) */
   const [myWords, setMyWords] = useState([]);
   const [selectedWordId, setSelectedWordId] = useState(null);
-  const [declaredNoWord, setDeclaredNoWord] = useState(false);
 
   useEffect(() => {
     fieldsRef.current = fields;
@@ -75,7 +74,6 @@ export default function CommonGuessPlayer({
     if (collecting || betweenMacros) {
       setMyWords([]);
       setSelectedWordId(null);
-      setDeclaredNoWord(false);
     }
   }, [
     collecting,
@@ -102,7 +100,6 @@ export default function CommonGuessPlayer({
     if (lastRoundIdForResetRef.current !== rid) {
       lastRoundIdForResetRef.current = rid;
       setSelectedWordId(null);
-      setDeclaredNoWord(false);
     }
   }, [matching, state?.roundId]);
 
@@ -154,49 +151,67 @@ export default function CommonGuessPlayer({
     setLastAck(null);
   }
 
-  const submitMatch = useCallback(() => {
-    if (!playerId || !roomCode || !matching) return;
-    if (state?.hasSubmittedRound) return;
+  const emitRoundMatch = useCallback(
+    ({ matched, wordId, wordText }) => {
+      if (!playerId || !roomCode || !matching) return;
+      if (state?.hasSubmittedRound) return;
+      const rid = state?.roundId;
+      if (rid == null) return;
+      socket.emit('SUBMIT_MATCH', {
+        code: roomCode,
+        playerId,
+        roundId: rid,
+        matched,
+        wordId,
+        wordText,
+      });
+    },
+    [
+      playerId,
+      roomCode,
+      matching,
+      state?.hasSubmittedRound,
+      state?.roundId,
+      socket,
+    ]
+  );
+
+  /** Нет слов в списке — сразу отправляем «нет совпадения» (один раз за раунд) */
+  const emptyListAutoSubmitRoundRef = useRef(null);
+  useEffect(() => {
+    if (!matching || state?.hasSubmittedRound) return;
     const rid = state?.roundId;
     if (rid == null) return;
-    if (myWords.length > 0 && selectedWordId == null && !declaredNoWord) return;
-
-    const matched = selectedWordId != null;
-    const wordId = matched ? selectedWordId : null;
-    const selected = matched
-      ? myWords.find((w) => w.id === selectedWordId)
-      : null;
-
-    socket.emit('SUBMIT_MATCH', {
-      code: roomCode,
-      playerId,
-      roundId: rid,
-      matched,
-      wordId,
-      wordText: selected?.word ?? null,
-    });
+    const rw = state?.remainingWords;
+    if (!Array.isArray(rw) || rw.length > 0) return;
+    if (emptyListAutoSubmitRoundRef.current === rid) return;
+    emptyListAutoSubmitRoundRef.current = rid;
+    setSelectedWordId(null);
+    emitRoundMatch({ matched: false, wordId: null, wordText: null });
   }, [
-    playerId,
-    roomCode,
     matching,
     state?.hasSubmittedRound,
     state?.roundId,
-    selectedWordId,
-    declaredNoWord,
-    myWords,
-    socket,
+    state?.remainingWords,
+    emitRoundMatch,
   ]);
 
   function pickWord(id) {
     if (state?.hasSubmittedRound) return;
-    setDeclaredNoWord(false);
-    setSelectedWordId((prev) => (prev === id ? null : id));
+    const item = myWords.find((w) => w.id === id);
+    if (!item) return;
+    setSelectedWordId(id);
+    emitRoundMatch({
+      matched: true,
+      wordId: id,
+      wordText: item.word ?? null,
+    });
   }
 
   function onNoWord() {
     if (state?.hasSubmittedRound) return;
     setSelectedWordId(null);
-    setDeclaredNoWord(true);
+    emitRoundMatch({ matched: false, wordId: null, wordText: null });
   }
 
   const timeUp = collecting && secLeft <= 0;
@@ -204,14 +219,13 @@ export default function CommonGuessPlayer({
 
   const poolTotal = state?.poolTotal ?? 0;
   const poolRemaining = state?.poolRemaining ?? 0;
-  const canRoundSubmit =
-    selectedWordId != null ||
-    declaredNoWord ||
-    (myWords.length === 0 && matching);
-  const roundSubmitDisabled =
-    !matching || state?.hasSubmittedRound || !canRoundSubmit;
-
-  if (!state) return null;
+  if (!state || state.gameType !== 'common_guess') {
+    return (
+      <p className="text-slate-400 text-center py-12 min-h-[40vh] flex items-center justify-center">
+        Загрузка состояния игры…
+      </p>
+    );
+  }
 
   if (betweenMacros) {
     return (
@@ -420,7 +434,9 @@ export default function CommonGuessPlayer({
         </div>
 
         <div>
-          <p className="text-slate-500 text-xs mb-2 ml-1">Твои слова</p>
+          <p className="text-slate-500 text-xs mb-2 ml-1 leading-snug">
+            Если слово есть у тебя в списке — выбери его
+          </p>
           <ul className="flex flex-col gap-2 min-h-[120px]">
             <AnimatePresence mode="popLayout">
               {myWords.map((item) => (
@@ -454,18 +470,9 @@ export default function CommonGuessPlayer({
           type="button"
           onClick={onNoWord}
           disabled={state?.hasSubmittedRound}
-          className="rounded-xl border border-slate-600 bg-slate-800/80 hover:bg-slate-800 disabled:opacity-40 py-3 text-sm text-slate-200"
+          className="rounded-xl border border-slate-600 bg-slate-800/80 hover:bg-slate-800 disabled:pointer-events-none disabled:opacity-40 py-3 text-sm text-slate-200"
         >
           У меня нет этого слова
-        </button>
-
-        <button
-          type="button"
-          onClick={submitMatch}
-          disabled={roundSubmitDisabled}
-          className="rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 py-3 text-lg font-semibold"
-        >
-          Готово
         </button>
 
         {state?.hasSubmittedRound && (

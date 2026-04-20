@@ -311,6 +311,21 @@ export default function PlayRoomPage() {
 
       const playingWithoutGame =
         (r?.status === 'PLAYING' || rss === 'PLAYING') && gs == null;
+
+      const roomGt =
+        r?.status === 'PLAYING' || r?.status === 'RESULTS'
+          ? r?.gameType
+          : null;
+      const stateGt =
+        gs != null && typeof gs.gameType === 'string' ? gs.gameType : null;
+      const gameTypeMismatch =
+        (r?.status === 'PLAYING' ||
+          r?.status === 'RESULTS' ||
+          rss === 'PLAYING' ||
+          rss === 'RESULTS') &&
+        roomGt &&
+        stateGt &&
+        roomGt !== stateGt;
       const noRoomTooLong = r == null && age > 2800;
       const lobbyEmptyTooLong =
         r?.status === 'LOBBY' &&
@@ -326,6 +341,7 @@ export default function PlayRoomPage() {
 
       const need =
         playingWithoutGame ||
+        gameTypeMismatch ||
         noRoomTooLong ||
         lobbyEmptyTooLong ||
         spectatorStuck;
@@ -402,18 +418,48 @@ export default function PlayRoomPage() {
 
   const msSinceJoin =
     joinedAtMs != null ? nowTick - joinedAtMs : 0;
+  const roomGtUi =
+    room?.status === 'PLAYING' || room?.status === 'RESULTS'
+      ? room?.gameType
+      : null;
+  const stateGtUi =
+    gameState != null && typeof gameState.gameType === 'string'
+      ? gameState.gameType
+      : null;
+  const clientGameMismatch =
+    (room?.status === 'PLAYING' ||
+      room?.status === 'RESULTS' ||
+      roomStatus === 'PLAYING' ||
+      roomStatus === 'RESULTS') &&
+    roomGtUi &&
+    stateGtUi &&
+    roomGtUi !== stateGtUi;
+
+  const mismatchResyncDoneRef = useRef(false);
+  useEffect(() => {
+    if (!joined || !clientGameMismatch) {
+      mismatchResyncDoneRef.current = false;
+      return;
+    }
+    if (mismatchResyncDoneRef.current) return;
+    mismatchResyncDoneRef.current = true;
+    emitSessionResync();
+  }, [joined, clientGameMismatch, emitSessionResync]);
+
   const showResyncUi =
     joined &&
-    msSinceJoin > 4000 &&
-    (role === 'spectator'
-      ? (room?.status === 'PLAYING' || roomStatus === 'PLAYING') &&
-        gameState == null
-      : ((room?.status === 'PLAYING' || roomStatus === 'PLAYING') &&
-          gameState == null) ||
-        room == null ||
-        (room?.status === 'LOBBY' &&
-          gameState == null &&
-          (!room?.participants || room.participants.length === 0)));
+    (clientGameMismatch
+      ? msSinceJoin > 800
+      : msSinceJoin > 4000 &&
+        (role === 'spectator'
+          ? (room?.status === 'PLAYING' || roomStatus === 'PLAYING') &&
+            gameState == null
+          : ((room?.status === 'PLAYING' || roomStatus === 'PLAYING') &&
+              gameState == null) ||
+            room == null ||
+            (room?.status === 'LOBBY' &&
+              gameState == null &&
+              (!room?.participants || room.participants.length === 0))));
 
   if (!joined) {
     if (spectatorEntryPending) {
@@ -444,14 +490,6 @@ export default function PlayRoomPage() {
           animate={{ opacity: 1, y: 0 }}
           className="max-w-md mx-auto w-full flex flex-col gap-4"
         >
-          <button
-            type="button"
-            onClick={() => nav('/')}
-            className="self-start inline-flex items-center gap-2 rounded-xl border border-slate-600 bg-slate-900/80 px-3 py-2 text-sm font-medium text-slate-200 hover:bg-slate-800"
-          >
-            <span aria-hidden>←</span>
-            На главную
-          </button>
           <h1 className="text-2xl font-bold text-center">Комната {code}</h1>
           <form onSubmit={submitJoin} className="flex flex-col gap-4">
             <input
@@ -491,6 +529,13 @@ export default function PlayRoomPage() {
           {joinError && (
             <p className="text-red-400 text-sm text-center">{joinError}</p>
           )}
+          <button
+            type="button"
+            onClick={() => nav('/')}
+            className="mt-2 w-full rounded-xl border border-slate-600 bg-slate-900 py-4 text-lg font-medium text-slate-200 hover:bg-slate-800"
+          >
+            На главную
+          </button>
         </motion.div>
       </div>
     );
@@ -518,7 +563,10 @@ export default function PlayRoomPage() {
             К экрану комнаты со списком игр
           </button>
         ) : null}
-        <p className="text-center text-slate-500 text-sm mb-6">Трансляция · {code}</p>
+        <p className="text-center text-slate-500 text-sm mb-6">
+          <span className="sr-only">Комната {code}</span>
+          {matchActive ? 'Трансляция' : `Трансляция · ${code}`}
+        </p>
         {showResyncUi ? (
           <div className="max-w-md mx-auto mb-4 flex justify-center">
             <button
@@ -532,7 +580,7 @@ export default function PlayRoomPage() {
         ) : null}
         <GameContainer
           role="spectator"
-          gameType={matchActive ? gameType : null}
+          gameType={gameType}
           gameState={gameState}
           roomCode={routeCode.length === 4 ? routeCode : code}
           socket={socket}
@@ -564,7 +612,16 @@ export default function PlayRoomPage() {
           size="sm"
         />
         <span>
-          {name} · {code}
+          {matchActive ? (
+            <>
+              <span className="sr-only">Комната {code}</span>
+              {name}
+            </>
+          ) : (
+            <>
+              {name} · {code}
+            </>
+          )}
         </span>
       </p>
       {showResyncUi ? (
@@ -580,7 +637,7 @@ export default function PlayRoomPage() {
       ) : null}
       <GameContainer
         role="player"
-        gameType={matchActive ? gameType : null}
+        gameType={gameType}
         gameState={gameState}
         roomCode={routeCode.length === 4 ? routeCode : code}
         socket={socket}

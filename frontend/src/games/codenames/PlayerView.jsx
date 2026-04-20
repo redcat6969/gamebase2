@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import CodenamesSetupPanel from './CodenamesSetupPanel.jsx';
+import CodenamesSetupPanel, { SessionScoresTable } from './CodenamesSetupPanel.jsx';
 import CodenamesAnswerKeyGrid from './CodenamesAnswerKeyGrid.jsx';
 
 function operativeCardClass(w) {
@@ -35,6 +35,8 @@ export default function PlayerView({ state, roomCode, socket, playerId }) {
   const [actionErr, setActionErr] = useState('');
   const [teamErr, setTeamErr] = useState('');
   const [hostErr, setHostErr] = useState('');
+  /** Капитан: первый клик по закрытой карточке — выбор, второй по той же — открытие */
+  const [captainPrimedWordId, setCaptainPrimedWordId] = useState(null);
 
   useEffect(() => {
     function onPlayerActionFail(p) {
@@ -59,6 +61,10 @@ export default function PlayerView({ state, roomCode, socket, playerId }) {
     };
   }, [socket]);
 
+  useEffect(() => {
+    setCaptainPrimedWordId(null);
+  }, [state?.phase, state?.turn]);
+
   if (!state || state.gameType !== 'codenames') return null;
 
   const myId = String(playerId ?? state.myId ?? '').trim();
@@ -82,7 +88,7 @@ export default function PlayerView({ state, roomCode, socket, playerId }) {
       return null;
     }
     return (
-      <div className="rounded-xl border border-amber-700/40 bg-amber-950/30 px-4 py-3 mb-4">
+      <div className="mb-4 shrink-0 rounded-xl border border-amber-700/40 bg-amber-950/30 px-4 py-3">
         <p className="text-amber-100/90 text-sm mb-2">
           Управление партией (экран ведущего)
         </p>
@@ -158,14 +164,29 @@ export default function PlayerView({ state, roomCode, socket, playerId }) {
 
     if (showHostControls) {
       return (
-        <div className="space-y-8 max-w-xl mx-auto">
-          <CodenamesSetupPanel state={state} roomCode={roomCode} socket={socket} />
-          <div className="border-t border-slate-800 pt-8">
-            <p className="text-center text-slate-500 text-xs uppercase tracking-wider mb-4">
-              Ваша роль
-            </p>
-            {isCaptain ? captainWait : teamPick}
-          </div>
+        <div className="max-w-xl mx-auto space-y-8 pb-8">
+          <CodenamesSetupPanel
+            state={state}
+            roomCode={roomCode}
+            socket={socket}
+            afterCaptainSelection={
+              <div className="border-t border-slate-800/80 pt-6 mb-2">
+                <p className="text-center text-slate-500 text-xs uppercase tracking-wider mb-4">
+                  Ваша роль
+                </p>
+                {isCaptain ? captainWait : teamPick}
+              </div>
+            }
+          />
+          {Array.isArray(state.sessionLeaderboard) &&
+          state.sessionLeaderboard.length > 0 ? (
+            <div className="border-t border-slate-800/80 pt-6">
+              <SessionScoresTable
+                leaderboard={state.sessionLeaderboard}
+                className="!mb-0"
+              />
+            </div>
+          ) : null}
         </div>
       );
     }
@@ -225,6 +246,17 @@ export default function PlayerView({ state, roomCode, socket, playerId }) {
     });
   }
 
+  function onCaptainWordTap(w) {
+    if (!isCaptain || !myId || emitCode.length !== 4 || !myTurn || w.isOpen) return;
+    setActionErr('');
+    if (captainPrimedWordId === w.id) {
+      revealWord(w.id);
+      setCaptainPrimedWordId(null);
+    } else {
+      setCaptainPrimedWordId(w.id);
+    }
+  }
+
   function endTurn() {
     if (!isCaptain || !myId || emitCode.length !== 4 || !myTurn) return;
     setActionErr('');
@@ -236,14 +268,14 @@ export default function PlayerView({ state, roomCode, socket, playerId }) {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="flex min-h-0 w-full max-w-[100vw] flex-col gap-3 overflow-x-hidden">
       {renderHostEndBar()}
       {actionErr ? (
-        <p className="text-center text-red-400 text-sm rounded-xl border border-red-900/50 bg-red-950/30 px-3 py-2">
+        <p className="shrink-0 text-center text-red-400 text-sm rounded-xl border border-red-900/50 bg-red-950/30 px-3 py-2">
           {actionErr}
         </p>
       ) : null}
-      <div className="text-center text-slate-300 text-sm">
+      <div className="shrink-0 text-center text-slate-300 text-sm">
         {isCaptain ? (
           <span>
             Капитан · ход{' '}
@@ -263,10 +295,22 @@ export default function PlayerView({ state, roomCode, socket, playerId }) {
         )}
       </div>
       {isCaptain && myTurn ? (
-        <div className="max-w-md mx-auto">
+        <div className="max-w-md mx-auto shrink-0 space-y-2">
+          {captainPrimedWordId ? (
+            <p className="text-center text-amber-200/90 text-xs">
+              Нажмите по выбранной карточке ещё раз, чтобы открыть
+            </p>
+          ) : (
+            <p className="text-center text-slate-500 text-xs">
+              Открытие карточки — два нажатия по ней
+            </p>
+          )}
           <button
             type="button"
-            onClick={endTurn}
+            onClick={() => {
+              setCaptainPrimedWordId(null);
+              endTurn();
+            }}
             className="w-full rounded-xl border border-slate-500 bg-slate-800/90 hover:bg-slate-700 py-3 text-sm font-semibold text-slate-100"
           >
             Завершить ход
@@ -276,39 +320,52 @@ export default function PlayerView({ state, roomCode, socket, playerId }) {
           </p>
         </div>
       ) : null}
-      <div className="grid grid-cols-5 gap-2">
-        {words.map((w) => {
-          const n = votes[w.id]?.length ?? 0;
-          const highlight =
-            operative && votedWordId === w.id && !w.isOpen
-              ? 'ring-2 ring-violet-400 ring-offset-2 ring-offset-slate-950'
-              : '';
+      <div className="w-full flex min-w-0 justify-center px-0.5">
+        <div
+          className="grid min-h-0 w-[min(100%,calc((100dvh-15rem)*1.35),calc(100vw-1rem))] max-h-[calc(100dvh-15rem)] max-w-full grid-cols-[repeat(5,minmax(0,1fr))] grid-rows-[repeat(5,minmax(0,1fr))] gap-[clamp(2px,1.2vmin,8px)] aspect-[1.35]"
+        >
+          {words.map((w) => {
+            const n = votes[w.id]?.length ?? 0;
+            const highlight =
+              operative && votedWordId === w.id && !w.isOpen
+                ? 'ring-2 ring-violet-400 ring-offset-2 ring-offset-slate-950'
+                : '';
+            const captainPrimed =
+              isCaptain &&
+              myTurn &&
+              captainPrimedWordId === w.id &&
+              !w.isOpen
+                ? 'ring-2 ring-amber-400 ring-offset-2 ring-offset-slate-950'
+                : '';
 
-          const cls = isCaptain ? captainCardClass(w) : operativeCardClass(w);
+            const cls = isCaptain ? captainCardClass(w) : operativeCardClass(w);
 
-          return (
-            <motion.button
-              key={w.id}
-              type="button"
-              layout
-              disabled={
-                w.isOpen ||
-                (operative && !myTurn) ||
-                (isCaptain && !myTurn)
-              }
-              onClick={() => (isCaptain ? revealWord(w.id) : voteWord(w.id))}
-              className={`relative aspect-[1.35] rounded-lg border-2 text-xs sm:text-sm font-bold leading-tight px-1 py-2 ${cls} ${highlight} disabled:opacity-40 disabled:pointer-events-none`}
-              whileTap={{ scale: 0.97 }}
-            >
-              <span className="block">{w.text}</span>
-              {n > 0 && !w.isOpen && (
-                <span className="absolute top-0.5 right-0.5 min-w-[1.1rem] h-4 px-1 rounded-full bg-violet-600 text-[10px] text-white font-bold leading-4">
-                  {n}
-                </span>
-              )}
-            </motion.button>
-          );
-        })}
+            return (
+              <motion.button
+                key={w.id}
+                type="button"
+                layout
+                disabled={
+                  w.isOpen ||
+                  (operative && !myTurn) ||
+                  (isCaptain && !myTurn)
+                }
+                onClick={() =>
+                  isCaptain ? onCaptainWordTap(w) : voteWord(w.id)
+                }
+                className={`relative flex h-full min-h-0 w-full min-w-0 flex-col items-center justify-center rounded-lg border-2 px-0.5 py-1 text-center font-bold leading-tight [font-size:clamp(0.5rem,2.6vmin,0.875rem)] sm:[font-size:clamp(0.55rem,2.8vmin,1rem)] ${cls} ${highlight} ${captainPrimed} disabled:opacity-40 disabled:pointer-events-none`}
+                whileTap={{ scale: 0.97 }}
+              >
+                <span className="line-clamp-4 break-words hyphens-auto">{w.text}</span>
+                {n > 0 && !w.isOpen && (
+                  <span className="absolute top-0.5 right-0.5 min-w-[1.1rem] h-4 px-1 rounded-full bg-violet-600 text-[10px] text-white font-bold leading-4">
+                    {n}
+                  </span>
+                )}
+              </motion.button>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

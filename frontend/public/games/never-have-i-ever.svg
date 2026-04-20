@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 300" fill="none" role="img" aria-hidden="true">
+  <defs>
+    <linearGradient id="nhie-a" x1="0" y1="0" x2="480" y2="300" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fb7185"/>
+      <stop offset="1" stop-color="#a78bfa"/>
+    </linearGradient>
+    <linearGradient id="nhie-g" x1="240" y1="30" x2="240" y2="270" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#be123c" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#0f172a" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect width="480" height="300" rx="20" fill="#020617"/>
+  <rect x="24" y="24" width="432" height="252" rx="16" fill="url(#nhie-g)"/>
+  <rect x="56" y="72" width="160" height="96" rx="14" stroke="url(#nhie-a)" stroke-width="2.5" fill="#1e293b"/>
+  <text x="96" y="128" fill="#fecdd3" font-family="Unbounded,system-ui,sans-serif" font-size="18" font-weight="600">K;></text>
+  <rect x="264" y="72" width="160" height="96" rx="14" stroke="#34d399" stroke-width="2.5" fill="#064e3b"/>
+  <text x="296" y="128" fill="#d1fae5" font-family="Unbounded,system-ui,sans-serif" font-size="18" font-weight="600">5 1K;></text>
+  <text x="120" y="220" fill="#94a3b8" font-family="Unbounded,system-ui,sans-serif" font-size="14" font-weight="500">/ =8:>340 =5&</text>
+</svg>

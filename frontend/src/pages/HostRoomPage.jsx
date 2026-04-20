@@ -1,10 +1,11 @@
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import QRCode from 'qrcode';
 import { getSocket } from '../socket.js';
 import GameContainer from '../components/GameContainer.jsx';
 import GameStartSetupModal from '../components/GameStartSetupModal.jsx';
+import GameRulesModal from '../components/GameRulesModal.jsx';
 import AvatarPicker from '../components/AvatarPicker.jsx';
 import PlayerAvatar from '../components/PlayerAvatar.jsx';
 import { LOBBY_GAME_CARDS } from '../data/gamesCatalog.js';
@@ -29,6 +30,23 @@ function readCreatorSession(code) {
   }
 }
 
+/** Подсказка для игроков: ссылка на главную + QR — две вёрстки (под кодом на sm+, снизу на мобилке) */
+function JoinRoomHint({ className }) {
+  return (
+    <p className={className}>
+      Игроки могут{' '}
+      <Link
+        to="/"
+        className="rounded-sm text-violet-300 underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
+      >
+        зайти на сайт
+      </Link>
+      , ввести код комнаты и присоединиться или отсканировать QR-код камерой
+      телефона.
+    </p>
+  );
+}
+
 export default function HostRoomPage() {
   const { code: codeParam } = useParams();
   const nav = useNavigate();
@@ -46,6 +64,10 @@ export default function HostRoomPage() {
   const [totalRounds, setTotalRounds] = useState(3);
   /** Настройки выбранной игры — только после «Начать игру» */
   const [gameSetupOpen, setGameSetupOpen] = useState(false);
+  /** Модалка «Подробные правила» */
+  const [rulesGame, setRulesGame] = useState(
+    /** @type {null | 'common_guess' | 'codenames' | 'never_have_i_ever'} */ (null),
+  );
   const creatorNameSubmittedRef = useRef('');
   const creatorAvatarSubmittedRef = useRef(DEFAULT_AVATAR_ID);
   const lastGamePayloadRef = useRef(null);
@@ -263,6 +285,20 @@ export default function HostRoomPage() {
     });
   }
 
+  function startNeverHaveIEverGame() {
+    const c = normalizeRoomCode(code);
+    if (!c) {
+      setStartError('Некорректный код комнаты');
+      return;
+    }
+    setStartError('');
+    socket.emit('start_game', {
+      code: c,
+      gameType: 'never_have_i_ever',
+      options: {},
+    });
+  }
+
   const hasLiveGameState =
     gameState != null && typeof gameState.gameType === 'string';
   const inGame =
@@ -296,15 +332,11 @@ export default function HostRoomPage() {
           onSubmit={submitCreateRoom}
           className="max-w-md mx-auto w-full flex flex-col gap-4"
         >
-          <button
-            type="button"
-            onClick={() => nav('/')}
-            className="self-start inline-flex items-center gap-2 rounded-xl border border-slate-600 bg-slate-900/80 px-3 py-2 text-sm font-medium text-slate-200 hover:bg-slate-800"
-          >
-            <span aria-hidden>←</span>
-            На главную
-          </button>
           <h1 className="text-2xl font-bold text-center">Новая комната</h1>
+          <p className="text-center text-slate-400 text-sm leading-relaxed">
+            После ввода имени вы создадите комнату, к которой смогут подключиться
+            игроки через QR или уникальный код
+          </p>
           <label className="text-sm text-slate-500">Ваше имя</label>
           <input
             value={creatorName}
@@ -330,6 +362,13 @@ export default function HostRoomPage() {
           {hostError && (
             <p className="text-red-400 text-sm text-center">{hostError}</p>
           )}
+          <button
+            type="button"
+            onClick={() => nav('/')}
+            className="mt-2 w-full rounded-xl border border-slate-600 bg-slate-900 py-4 text-lg font-medium text-slate-200 hover:bg-slate-800"
+          >
+            На главную
+          </button>
         </motion.form>
       </div>
     );
@@ -342,37 +381,38 @@ export default function HostRoomPage() {
         animate={{ opacity: 1 }}
         className="max-w-3xl mx-auto"
       >
-        {!inGame && (
-          <button
-            type="button"
-            onClick={() => nav('/')}
-            className="mb-6 inline-flex items-center gap-2 rounded-xl border border-slate-600 bg-slate-900/80 px-4 py-2.5 text-sm font-medium text-slate-200 hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
-          >
-            <span aria-hidden>←</span>
-            На главную
-          </button>
-        )}
         {(hostError || startError) && (
           <div className="mb-6 rounded-xl border border-amber-700/50 bg-amber-950/40 px-4 py-3 text-amber-100 text-sm">
             {startError || hostError}
           </div>
         )}
-        <header className="flex flex-wrap items-end justify-between gap-4 mb-8">
-          <div>
-            <p className="text-slate-500 text-sm uppercase tracking-wider">Комната</p>
-            <p className="text-5xl font-black font-mono tracking-widest text-white">{code}</p>
-          </div>
-          {!inGame && (
-            <div className="flex flex-col items-center">
-              {qrDataUrl ? (
-                <img src={qrDataUrl} alt="QR" className="rounded-xl border border-slate-700" />
-              ) : (
-                <div className="w-[220px] h-[220px] bg-slate-900 rounded-xl animate-pulse" />
-              )}
-              <p className="text-xs text-slate-500 mt-2 break-all max-w-[220px]">{playUrl}</p>
+        {!inGame && (
+          <div className="mb-8 rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
+            <div className="flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0 w-full text-center sm:max-w-lg sm:text-left">
+                <p className="text-slate-500 text-sm uppercase tracking-wider">
+                  Комната
+                </p>
+                <p className="text-5xl font-black font-mono tracking-widest text-white">
+                  {code}
+                </p>
+                <JoinRoomHint className="mt-4 hidden text-sm leading-relaxed text-slate-400 sm:block" />
+              </div>
+              <div className="mx-auto flex shrink-0 flex-col items-center sm:mx-0 sm:items-end">
+                {qrDataUrl ? (
+                  <img
+                    src={qrDataUrl}
+                    alt="QR-код: ссылка на комнату"
+                    className="rounded-xl border border-slate-700"
+                  />
+                ) : (
+                  <div className="h-[220px] w-[220px] animate-pulse rounded-xl bg-slate-900" />
+                )}
+              </div>
+              <JoinRoomHint className="border-t border-slate-800/80 pt-5 text-sm leading-relaxed text-slate-400 sm:hidden" />
             </div>
-          )}
-        </header>
+          </div>
+        )}
 
         <AnimatePresence mode="wait">
           {!inGame ? (
@@ -382,42 +422,48 @@ export default function HostRoomPage() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.3 }}
-              className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6 mb-6"
+              className="mb-8"
             >
-              <h2 className="text-lg font-semibold text-slate-300 mb-3">Участники</h2>
-              <ul className="space-y-2">
-                {participants.map((p) => (
-                  <li
-                    key={p.id}
-                    className="flex flex-wrap items-center gap-2 text-slate-200"
-                  >
-                    <PlayerAvatar
-                      avatarId={p.avatar}
-                      size="sm"
-                      className={p.role === 'spectator' ? 'opacity-50' : ''}
-                    />
-                    <span>
-                      {p.role === 'spectator'
-                        ? 'Зритель'
-                        : p.name || 'Игрок'}
-                    </span>
-                    {p.isCreator && (
-                      <span className="text-xs font-semibold uppercase tracking-wide text-violet-300 bg-violet-950/80 border border-violet-600/40 px-2 py-0.5 rounded-md">
-                        Создатель
+              <div className="mb-10 rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
+                <h2 className="mb-3 text-lg font-semibold text-slate-300">
+                  Участники
+                </h2>
+                <ul className="space-y-2">
+                  {participants.map((p) => (
+                    <li
+                      key={p.id}
+                      className="flex flex-wrap items-center gap-2 text-slate-200"
+                    >
+                      <PlayerAvatar
+                        avatarId={p.avatar}
+                        size="sm"
+                        className={p.role === 'spectator' ? 'opacity-50' : ''}
+                      />
+                      <span>
+                        {p.role === 'spectator'
+                          ? 'Зритель'
+                          : p.name || 'Игрок'}
                       </span>
-                    )}
-                    {p.role === 'spectator' && (
-                      <span className="text-xs text-slate-500">(только просмотр)</span>
-                    )}
-                  </li>
-                ))}
-                {participants.length === 0 && (
-                  <li className="text-slate-500">Загрузка списка…</li>
-                )}
-              </ul>
+                      {p.isCreator && (
+                        <span className="rounded-md border border-violet-600/40 bg-violet-950/80 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-violet-300">
+                          Создатель
+                        </span>
+                      )}
+                      {p.role === 'spectator' && (
+                        <span className="text-xs text-slate-500">
+                          (только просмотр)
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                  {participants.length === 0 && (
+                    <li className="text-slate-500">Загрузка списка…</li>
+                  )}
+                </ul>
+              </div>
 
-              <div className="mt-8 pt-6 border-t border-slate-800">
-                <h3 className="text-center text-slate-400 text-sm mb-4 uppercase tracking-wider">
+              <div>
+                <h3 className="mb-4 text-center text-sm uppercase tracking-wider text-slate-400">
                   Выберите игру
                 </h3>
                 <ul className="grid gap-4 sm:grid-cols-2">
@@ -433,40 +479,93 @@ export default function HostRoomPage() {
                           />
                         </div>
                         <div className="p-4 flex flex-col gap-2 flex-1">
-                          <h4 className="text-lg text-white leading-snug">
+                          <h4 className="text-xl font-semibold leading-snug text-white sm:text-2xl">
                             {card.title}
                           </h4>
-                          <p className="text-sm text-slate-400 leading-relaxed flex-1">
-                            {card.description}
-                          </p>
+                          <div className="flex min-h-0 flex-1 flex-col">
+                            <p className="text-sm text-slate-400 leading-relaxed">
+                              {card.description}
+                            </p>
+                            {card.funOfGame ? (
+                              <div className="mt-3 border-t border-slate-800/70 pt-3">
+                                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                  Фан игры
+                                </p>
+                                <p className="text-sm leading-relaxed text-slate-400/95">
+                                  {card.funOfGame}
+                                </p>
+                              </div>
+                            ) : null}
+                          </div>
                           {card.playable && card.gameType === 'common_guess' ? (
-                            <button
-                              type="button"
-                              disabled={!canStart}
-                              title={
-                                canStart
-                                  ? undefined
-                                  : 'Начать может только создатель комнаты в лобби'
-                              }
-                              onClick={() => setGameSetupOpen(true)}
-                              className="mt-2 w-full rounded-xl bg-fuchsia-600 hover:bg-fuchsia-500 disabled:opacity-40 disabled:cursor-not-allowed py-3 text-lg font-bold"
-                            >
-                              Начать игру
-                            </button>
+                            <div className="mt-2 flex flex-col gap-2">
+                              <button
+                                type="button"
+                                disabled={!canStart}
+                                title={
+                                  canStart
+                                    ? undefined
+                                    : 'Начать может только создатель комнаты в лобби'
+                                }
+                                onClick={() => setGameSetupOpen(true)}
+                                className="w-full rounded-xl bg-fuchsia-600 hover:bg-fuchsia-500 disabled:opacity-40 disabled:cursor-not-allowed py-3 text-lg font-bold"
+                              >
+                                Начать игру
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setRulesGame('common_guess')}
+                                className="w-full rounded-xl border border-fuchsia-500/45 bg-fuchsia-950/20 py-2.5 text-sm font-semibold text-fuchsia-200/95 hover:bg-fuchsia-950/40"
+                              >
+                                Подробные правила
+                              </button>
+                            </div>
                           ) : card.playable && card.gameType === 'codenames' ? (
-                            <button
-                              type="button"
-                              disabled={!canStart}
-                              title={
-                                canStart
-                                  ? undefined
-                                  : 'Начать может только создатель комнаты в лобби'
-                              }
-                              onClick={startCodenamesGame}
-                              className="mt-2 w-full rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed py-3 text-lg font-bold"
-                            >
-                              Начать игру
-                            </button>
+                            <div className="mt-2 flex flex-col gap-2">
+                              <button
+                                type="button"
+                                disabled={!canStart}
+                                title={
+                                  canStart
+                                    ? undefined
+                                    : 'Начать может только создатель комнаты в лобби'
+                                }
+                                onClick={startCodenamesGame}
+                                className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed py-3 text-lg font-bold"
+                              >
+                                Начать игру
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setRulesGame('codenames')}
+                                className="w-full rounded-xl border border-emerald-500/45 bg-emerald-950/20 py-2.5 text-sm font-semibold text-emerald-200/95 hover:bg-emerald-950/40"
+                              >
+                                Подробные правила
+                              </button>
+                            </div>
+                          ) : card.playable && card.gameType === 'never_have_i_ever' ? (
+                            <div className="mt-2 flex flex-col gap-2">
+                              <button
+                                type="button"
+                                disabled={!canStart}
+                                title={
+                                  canStart
+                                    ? undefined
+                                    : 'Начать может только создатель комнаты в лобби'
+                                }
+                                onClick={startNeverHaveIEverGame}
+                                className="w-full rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed py-3 text-lg font-bold"
+                              >
+                                Начать игру
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setRulesGame('never_have_i_ever')}
+                                className="w-full rounded-xl border border-rose-500/45 bg-rose-950/25 py-2.5 text-sm font-semibold text-rose-100/95 hover:bg-rose-950/45"
+                              >
+                                Подробные правила
+                              </button>
+                            </div>
                           ) : null}
                         </div>
                       </article>
@@ -486,7 +585,7 @@ export default function HostRoomPage() {
         >
           <GameContainer
             role="player"
-            gameType={inGame ? gameType : null}
+            gameType={gameType}
             gameState={gameState}
             roomCode={code}
             socket={socket}
@@ -503,6 +602,21 @@ export default function HostRoomPage() {
           onCancel={() => setGameSetupOpen(false)}
           onConfirm={confirmStartGameFromSetup}
         />
+
+        <GameRulesModal
+          rulesGame={rulesGame}
+          onClose={() => setRulesGame(null)}
+        />
+
+        {!inGame && (
+          <button
+            type="button"
+            onClick={() => nav('/')}
+            className="mt-8 w-full rounded-xl border border-slate-600 bg-slate-900 py-4 text-lg font-medium text-slate-200 hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
+          >
+            На главную
+          </button>
+        )}
       </motion.div>
     </div>
   );
