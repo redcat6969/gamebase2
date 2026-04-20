@@ -98,8 +98,8 @@ export default function GameLaunchModal({
               {!decksLoading && decks.length === 0 ? (
                 <p className="text-sm text-amber-200/90">
                   Нет доступных колод для этой игры. Проверьте папку{' '}
-                  <code className="rounded bg-slate-800 px-1">backend/gameDecks/</code> на
-                  сервере.
+                  <code className="rounded bg-slate-800 px-1">backend/src/gameDecks/bundled/</code>{' '}
+                  в деплое.
                 </p>
               ) : null}
               <ul className="flex flex-col gap-2">

@@ -37,7 +37,7 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
 
-/** Метаданные колод для экрана выбора (без текстов items) — единый источник с файлами в backend/gameDecks/ */
+/** Метаданные колод для экрана выбора (без текстов items) — см. src/gameDecks/bundled/ */
 app.get('/api/game-decks', (_req, res) => {
   try {
     res.json(getDeckCatalogMeta());

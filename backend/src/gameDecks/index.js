@@ -5,14 +5,13 @@ import { WORD_BANK } from '../games/codenamesWordBank.js';
 
 const __src = dirname(fileURLToPath(import.meta.url));
 
-/** Корень backend (…/backend) */
-function backendRoot() {
-  return join(__src, '..', '..');
-}
-
-/** Каталог с JSON-колодами: backend/gameDecks/<игра>/*.json */
+/**
+ * JSON-колоды лежат рядом с кодом (`src/gameDecks/bundled/`), чтобы в проде они
+ * попадали в деплой вместе с приложением. Не кладите колоды только в
+ * `backend/gameDecks/` у корня репозитория — этот путь часто не копируют в образ.
+ */
 function gameDecksRoot() {
-  return join(backendRoot(), 'gameDecks');
+  return join(__src, 'bundled');
 }
 
 /**
@@ -49,7 +48,7 @@ function loadJsonItemsFile(absPath) {
 }
 
 /**
- * @param {string} deckGameDir каталог вида …/gameDecks/common_guess
+ * @param {string} deckGameDir каталог вида …/bundled/common_guess
  * @param {Record<string, unknown>} raw распарсенный JSON колоды
  * @returns {string[]}
  */

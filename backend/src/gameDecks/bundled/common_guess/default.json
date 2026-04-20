@@ -4,6 +4,6 @@
   "description": "Все вопросы из основного набора — разнообразные темы.",
   "itemsRef": {
     "kind": "file",
-    "path": "../../questions.json"
+    "path": "../../../../questions.json"
   }
 }

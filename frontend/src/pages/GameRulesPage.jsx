@@ -3,6 +3,7 @@ import { Link, Navigate, useLocation, useParams } from 'react-router-dom';
 import { getGameTypeFromRulesSlug } from '../data/gameRulesRoutes.js';
 import { GameRulesArticle } from '../components/gameRules/GameRulesContent.jsx';
 import LandingHeroBand from '../components/LandingHeroBand.jsx';
+import SiteFooter from '../components/SiteFooter.jsx';
 
 /** @typedef {import('../data/gameRulesRoutes.js').PlayableGameType} PlayableGameType */
 
@@ -94,7 +95,7 @@ export default function GameRulesPage() {
   useRulesPageSeo({ gameType });
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white">
+    <div className="flex min-h-screen flex-col bg-slate-950 text-white">
       <LandingHeroBand>
         <div className="mx-auto max-w-2xl px-4 pb-20 pt-6 sm:px-8 sm:pb-24 sm:pt-6">
           <div className="mb-12 flex items-center justify-between gap-4 sm:mb-14">
@@ -145,7 +146,7 @@ export default function GameRulesPage() {
         </div>
       </LandingHeroBand>
 
-      <main className="mx-auto max-w-2xl px-4 py-10 sm:px-6 sm:py-12">
+      <main className="mx-auto w-full max-w-2xl flex-1 px-4 py-10 sm:px-6 sm:py-12">
         <GameRulesArticle gameType={gameType} />
 
         <div className="mt-12 flex w-full flex-col gap-3 sm:mt-14">
@@ -166,6 +167,8 @@ export default function GameRulesPage() {
           </Link>
         </div>
       </main>
+
+      <SiteFooter className="w-full" />
     </div>
   );
 }

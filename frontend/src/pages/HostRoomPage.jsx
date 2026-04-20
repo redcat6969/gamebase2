@@ -418,11 +418,11 @@ export default function HostRoomPage() {
   }
 
   return (
-    <div className="min-h-screen p-6 md:p-10">
+    <div className="min-h-screen w-full min-w-0 overflow-x-hidden p-4 sm:p-6 md:p-10">
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        className="max-w-3xl mx-auto"
+        className="mx-auto w-full min-w-0 max-w-3xl"
       >
         {(hostError || startError || gameDecksError) && (
           <div className="mb-6 rounded-xl border border-amber-700/50 bg-amber-950/40 px-4 py-3 text-amber-100 text-sm">
@@ -529,10 +529,10 @@ export default function HostRoomPage() {
                 <h3 className="mb-4 text-center text-sm uppercase tracking-wider text-slate-400">
                   Выберите игру
                 </h3>
-                <ul className="grid gap-4 sm:grid-cols-2">
+                <ul className="grid w-full min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
                   {LOBBY_GAME_CARDS.map((card) => (
-                    <li key={card.id}>
-                      <article className="rounded-3xl border border-slate-800 bg-slate-950/40 overflow-hidden flex flex-col h-full">
+                    <li key={card.id} className="min-w-0 max-w-full">
+                      <article className="flex h-full min-w-0 w-full max-w-full flex-col overflow-hidden rounded-3xl border border-slate-800 bg-slate-950/40">
                         <div className="aspect-[16/10] bg-slate-950 border-b border-slate-800/80">
                           <img
                             src={card.image}
@@ -541,12 +541,12 @@ export default function HostRoomPage() {
                             draggable={false}
                           />
                         </div>
-                        <div className="p-6 flex flex-col gap-2 flex-1">
-                          <h4 className="text-xl font-semibold leading-snug text-white sm:text-2xl">
+                        <div className="flex min-w-0 flex-1 flex-col gap-2 p-4 sm:p-6">
+                          <h4 className="break-words text-xl font-semibold leading-snug text-white sm:text-2xl">
                             {card.title}
                           </h4>
-                          <div className="flex min-h-0 flex-1 flex-col">
-                            <p className="text-sm text-slate-400 leading-relaxed">
+                          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                            <p className="break-words text-sm leading-relaxed text-slate-400">
                               {card.description}
                             </p>
                             {card.funOfGame ? (
@@ -554,7 +554,7 @@ export default function HostRoomPage() {
                                 <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
                                   Фан игры
                                 </p>
-                                <p className="text-sm leading-relaxed text-slate-400/95">
+                                <p className="break-words text-sm leading-relaxed text-slate-400/95">
                                   {card.funOfGame}
                                 </p>
                               </div>

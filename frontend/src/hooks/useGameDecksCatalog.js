@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 
 /**
- * Метаданные колод с бэкенда (файлы backend/gameDecks/).
+ * Метаданные колод с бэкенда (GET /api/game-decks; файлы в backend/src/gameDecks/bundled/).
  * @returns {{ catalog: Record<string, { id: string; title: string; description: string }[]> | null; error: string | null; loading: boolean }}
  */
 export function useGameDecksCatalog() {
